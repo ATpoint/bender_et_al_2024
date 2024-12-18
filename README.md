@@ -46,8 +46,7 @@ ls Source_Data_*.zip | while read p; do unzip ${p%.zip}; done
 rm Source_Data_*.zip
 ```
 
-The raw (that is MaxQuant-processed) proteome is available as an Excel sheet via the EMBO website ([here -- don't use](https://www.embopress.org/doi/suppl/10.1038/s44318-024-00295-y/suppl_file/44318_2024_295_moesm11_esm.xlsx)) as an Appendix file,
-but the some gene names were converted to dates during the submission process, so we provide the "proper" spreadsheet via
+The raw (that is MaxQuant-processed) proteome is available as an Excel sheet via the EMBO website ([here -- don't use](https://www.embopress.org/doi/suppl/10.1038/s44318-024-00295-y/suppl_file/44318_2024_295_moesm11_esm.xlsx)) as an Appendix file, but the some gene names were converted to dates during the submission process, so we provide the "proper" spreadsheet via
 this GitHub repository:
 
 ```bash
@@ -59,19 +58,17 @@ wget https://github.com/ATpoint/bender_et_al_2024/raw/refs/heads/main/Dataset_EV
 We provide a Docker image that contains the exact software versions (R and command line applications) we used for analysis, allowing reproduction of the figures. Given that Docker is installed and in `PATH`, run this in your terminal:
 
 Here, `DIR` is the full path to the directory with the downloaded source data from above. 
-I run the code to create this repository on a GitHub Codespace instance, so I set `DIR` accordingly:
 
 ```r
-DIR="/workspaces/bender_et_al_2024/"
+DIR="/mnt/c/Users/atpoint/Downloads/bender_et_al_2024/"
 IMAGE="atpoint/phd_project:1.9.5"
 docker pull "$IMAGE" # takes some time, it's a big one due to legacy burden over many years...
 docker run -d -p 8787:8787 -v "${DIR}":/projectdir -e PASSWORD=aVeryComplexPassword -e ROOT=TRUE -e IMAGE="$IMAGE" "$IMAGE"
 ```
 
-Then type `localhost:8787` into your web browser to access the interactive RStudio server session.
-if you run on Codespaces you can forward the 8787 port to your local machine and access the session that way.
+Then type `localhost:8787` into your web browser with the username "rstudio" and password as above to access the interactive RStudio server session. 
 
-From here, run the Rmarkdown scripts in chronological order. I used a 4-core 16GB Codespace instance to create this repository,
-and also tested on an old 16GB RAM Macbook Pro from 2015, so it should work pretty much everywhere.
+From here, run the Rmarkdown scripts in chronological order. A laptop with >= 16GB of RAM should be able to complete
+the analysis.
 
 If not, or if you have any details questions, feel free to email me at `a.bender<guesswhat>uni-muenster.de` or open an issue.
