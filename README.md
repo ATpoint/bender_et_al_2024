@@ -60,15 +60,14 @@ We provide a Docker image that contains the exact software versions (R and comma
 Here, `DIR` is the full path to the directory with the downloaded source data from above. 
 
 ```r
-DIR="/mnt/c/Users/atpoint/Downloads/bender_et_al_2024/"
+DIR="/path/to/bender_et_al_2024/"
 IMAGE="atpoint/phd_project:1.9.5"
 docker pull "$IMAGE" # takes some time, it's a big one due to legacy burden over many years...
 docker run -d -p 8787:8787 -v "${DIR}":/projectdir -e PASSWORD=aVeryComplexPassword -e ROOT=TRUE -e IMAGE="$IMAGE" "$IMAGE"
 ```
 
-Then type `localhost:8787` into your web browser with the username "rstudio" and password as above to access the interactive RStudio server session. 
+Then type `localhost:8787` into your web browser with the username "rstudio" and password as above to access the interactive RStudio server session. If you run on Codespaces you can forward the 8787 port to your local machine and access the session that way.
 
-From here, run the Rmarkdown scripts in chronological order. A laptop with >= 16GB of RAM should be able to complete
-the analysis.
+From here, run the Rmarkdown scripts in chronological order.
 
 If not, or if you have any details questions, feel free to email me at `a.bender<guesswhat>uni-muenster.de` or open an issue.
