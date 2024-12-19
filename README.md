@@ -3,6 +3,41 @@
 Code documentation for our paper **Bender et al (2024) EMBO**, 
 [Redistribution of PU.1 partner transcription factor binding secures cell survival in leukemogenesis](https://www.embopress.org/doi/full/10.1038/s44318-024-00295-y).
 
+## Content
+
+- `00_packageVersions.Rmd`
+Lists all R package and command line tool versions used in the Docker image we used for all analysis.
+
+- `01_dataRetrieval.Rmd`
+Uses biomaRt to fetch a lookup table of human-to-mouse orthologs necessary for some analysis scripts.
+
+- `02_scRNAseq.Rmd`
+All scRNA-seq analysis. Covers Figures 1A, 1B, 1C, 1D, 1E, 1F, 2A, 2B, 2C, Appendix Figure S1B/C/D/E/F/G/H/I/J and S4B.
+
+- `03_RNAseq_Celllines.Rmd`
+Bulk RNA-seq of cell lines. Covers Appendix Figure S2D.
+
+- `04_shRNAscreen.Rmd`
+The shRNA screen analysis. Covers Figures 3A, 3B, 3C and Appendix Figure S3B.
+
+- `05_BeatAMLcohort.Rmd`
+Integration of the BeatAML cohort. Covers Figure 4A and 4B.
+
+- `06_proteome.Rmd`
+Proteome analysis from Hox cell lines. Covers Figures 2D, 2E and 5A.
+
+- `07_atacseq.Rmd`
+ATAC-seq analysis and motif search. Covers Figures 6A-D, and 6I/J and data generation for manually drawn Figures 6E-H.
+
+- `08_chipseq.Rmd`
+RUNX1 ChIP-seq. Covers Figures 7A-E and Appendix Figure S5A/B.
+
+- `09_other.Rmd`
+The autohagy genes from RNA-seq in ex vivo murine cells and the low-throughput experiment analysis.
+Covers Figure 3D, 4C, 5B-H, 7F/G, Appendix Figure S3F
+
+## Run Code
+
 Follow these steps to reproduce the figures:
 
 1. Get source data
