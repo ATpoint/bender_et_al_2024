@@ -6,35 +6,45 @@ Code documentation for our paper **Bender et al (2024) EMBO**,
 ## Content
 
 - `00_packageVersions.Rmd`
-Lists all R package and command line tool versions used in the Docker image we used for all analysis.
+Lists all R package and command line tool versions used in the Docker image we used for all analysis.  
+See rendered code [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/ATpoint/bender_et_al_2024/refs/heads/main/00_packageVersions.html).
 
 - `01_dataRetrieval.Rmd`
-Uses biomaRt to fetch a lookup table of human-to-mouse orthologs necessary for some analysis scripts.
+Uses biomaRt to fetch a lookup table of human-to-mouse orthologs necessary for some analysis scripts.  
+See rendered code [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/ATpoint/bender_et_al_2024/refs/heads/main/01_dataRetrieval.html).
 
 - `02_scRNAseq.Rmd`
-All scRNA-seq analysis. Covers Figures 1A, 1B, 1C, 1D, 1E, 1F, 2A, 2B, 2C, Appendix Figure S1B/C/D/E/F/G/H/I/J and S4B.
+All scRNA-seq analysis. Covers Figures 1A, 1B, 1C, 1D, 1E, 1F, 2A, 2B, 2C, Appendix Figure S1B/C/D/E/F/G/H/I/J and S4B.  
+See rendered code [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/ATpoint/bender_et_al_2024/refs/heads/main/02_scRNAseq.html).
 
 - `03_RNAseq_Celllines.Rmd`
-Bulk RNA-seq of cell lines. Covers Appendix Figure S2D.
+Bulk RNA-seq of cell lines. Covers Appendix Figure S2D.  
+See rendered code [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/ATpoint/bender_et_al_2024/refs/heads/main/03_RNAseq_Celllines.html).
 
 - `04_shRNAscreen.Rmd`
-The shRNA screen analysis. Covers Figures 3A, 3B, 3C and Appendix Figure S3B.
+The shRNA screen analysis. Covers Figures 3A, 3B, 3C and Appendix Figure S3B.  
+See rendered code [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/ATpoint/bender_et_al_2024/refs/heads/main/04_shRNAscreen.html).
 
 - `05_BeatAMLcohort.Rmd`
-Integration of the BeatAML cohort. Covers Figure 4A and 4B.
+Integration of the BeatAML cohort. Covers Figure 4A and 4B.  
+See rendered code [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/ATpoint/bender_et_al_2024/refs/heads/main/05_BeatAMLcohort.html).
 
 - `06_proteome.Rmd`
-Proteome analysis from Hox cell lines. Covers Figures 2D, 2E and 5A.
+Proteome analysis from Hox cell lines. Covers Figures 2D, 2E and 5A.  
+See rendered code [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/ATpoint/bender_et_al_2024/refs/heads/main/06_proteome.html).
 
 - `07_atacseq.Rmd`
-ATAC-seq analysis and motif search. Covers Figures 6A-D, and 6I/J and data generation for manually drawn Figures 6E-H.
+ATAC-seq analysis and motif search. Covers Figures 6A-D, and 6I/J and data generation for manually drawn Figures 6E-H.  
+See rendered code [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/ATpoint/bender_et_al_2024/refs/heads/main/07_atacseq.html).
 
 - `08_chipseq.Rmd`
-RUNX1 ChIP-seq. Covers Figures 7A-E and Appendix Figure S5A/B.
+RUNX1 ChIP-seq. Covers Figures 7A-E and Appendix Figure S5A/B.  
+See rendered code [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/ATpoint/bender_et_al_2024/refs/heads/main/08_chipseq.html).
 
 - `09_other.Rmd`
 The autohagy genes from RNA-seq in ex vivo murine cells and the low-throughput experiment analysis.
-Covers Figure 3D, 4C, 5B-H, 7F/G, Appendix Figure S3F
+Covers Figure 3D, 4C, 5B-H, 7F/G, Appendix Figure S3F.  
+See rendered code [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/ATpoint/bender_et_al_2024/refs/heads/main/09_other.html).
 
 ## Run Code
 
