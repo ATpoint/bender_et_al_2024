@@ -1,0 +1,67 @@
+---
+title: "Bender et al (2024) -- EMBO"
+subtitle: Package versions
+author:
+- name: Alexander Bender
+  affiliation: Institute of Molecular Tumor Biology, Muenster/Germany
+date: "`r paste('Compiled:', format(Sys.time(), '%d-%b-%Y'))`"
+output:
+  rmdformats::readthedown:
+    code_folding: show
+    keep_md: false
+    highlight: tango
+    toc_float:
+      collapsed: false
+editor_options: 
+  markdown: 
+    wrap: 200
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+# Setup
+
+Define root directory that contains the folder with source data. Run script that
+loads packages and define document-specific variables.
+
+```{r setup}
+
+# Inside this Docker container we mount the directory with all the source data as "/projectdir/"
+rootdir <- "/projectdir/"
+library(dplyr)
+```
+
+# Package versions
+
+A summary of all R package versions installed in this container:
+
+```{r pkgs}
+
+pkg_ver <-
+  lapply(rownames(installed.packages()), function(x) {
+    data.frame(package = x, version = packageVersion(x))
+  }) %>%
+  do.call(rbind, .) %>%
+  dplyr::arrange(package) %>%
+  unique()
+
+knitr::kable(pkg_ver)
+
+sessionInfo()
+```
+
+# Command line tools
+
+Versions of MAGeCK RRA, meme, homer, bedtools
+
+```{bash}
+
+echo "ame:" $(/software/meme/bin/ame --version)
+echo "bedtools:" $(/software/bedtools2/bin/bedtools --version | awk '{gsub("bedtools ", "");print}')
+echo "mageck:" "$(${MAGECKPATH}/mageck --version)"
+echo "meme:" $(/software/meme/bin/meme -version)
+
+```

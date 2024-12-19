@@ -1,0 +1,279 @@
+---
+title: "Bender et al (2024) -- EMBO"
+subtitle: BeatAML cohort
+author:
+- name: Alexander Bender
+  affiliation: Institute of Molecular Tumor Biology, Muenster/Germany
+date: "`r paste('Compiled:', format(Sys.time(), '%d-%b-%Y'))`"
+output:
+  rmdformats::readthedown:
+    code_folding: show
+    keep_md: false
+    highlight: tango
+    toc_float:
+      collapsed: false
+editor_options: 
+  markdown: 
+    wrap: 200
+params:
+  save_final: true
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+# Setup
+
+Define root directory that contains the folder with source data. Run script that
+loads packages and define document-specific variables.
+
+```{r setup}
+
+# Inside this Docker container we mount the directory with all the source data as "/projectdir/"
+rootdir <- "/projectdir/"
+source(paste0(rootdir, "/runStartup.R"))
+```
+
+# BeatAML RNA-seq
+
+Download the raw RNA-seq counts from the Vizome website and the annotations from the paper supplement.
+This might break at some point if paths change on their ends.
+
+```{r beataml}
+
+# Download metadata
+tmp <- tempfile(fileext = ".xlsx")
+base::options(timeout = 9999)
+download.file(
+  "https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-018-0623-z/MediaObjects/41586_2018_623_MOESM3_ESM.xlsx",
+  tmp
+)
+
+beataml_clinical <- openxlsx::read.xlsx(tmp, sheet = "Tabe S5-Clinical Summary")
+rm(tmp)
+
+# Download raw counts
+tmp <- tempfile(fileext = ".csv.gz")
+download.file(
+  "http://www.vizome.org/images/BeatAML_RNASeq_rawcounts_2018_10_24.csv",
+  tmp
+)
+
+beataml_raw <- data.table::fread(tmp, data.table = FALSE)
+
+# Now data sanitation putting everything into a SummarizedExperiment
+tmp.cts <- beataml_raw[, 10:ncol(beataml_raw)]
+rownames(tmp.cts) <- paste(beataml_raw$Gene, beataml_raw$Symbol, sep = "_")
+
+se_beataml <- SummarizedExperiment::SummarizedExperiment(assays = list(counts = tmp.cts))
+rowData(se_beataml)$length <- beataml_raw$Length
+rm(beataml_raw)
+
+tmp.coldata <- dplyr::left_join(
+  x = data.frame(LabId = colnames(se_beataml)),
+  y = beataml_clinical, by = "LabId"
+) %>%
+  DataFrame()
+
+rownames(tmp.coldata) <- tmp.coldata$LabId
+
+colData(se_beataml) <- tmp.coldata
+
+# Mark the healthy controls. This info is written in the paper methods section,
+# so one manually has to look it up
+se_beataml$sampletype <- dplyr::if_else(grepl("17-", se_beataml$LabId), "healthy BM MNC", "AML")
+se_beataml$sampletype[grep("17-00053|17-00056", se_beataml$LabId)] <- "healthy BM CD34+"
+se_beataml$sampletype[grep("17-00053|17-00056", se_beataml$LabId)] <- "healthy BM CD34+"
+
+se_beataml$fab <- se_beataml$FAB.Blast.Morphology
+se_beataml$fab[is.na(se_beataml$fab)] <- "unknown"
+assay(se_beataml, "logcpm") <- edgeR::cpm(edgeR::calcNormFactors(se_beataml), log = TRUE)
+
+invisible(rm(list = ls(pattern = "^tmp")))
+
+# Then we need a homolog table mapping mouse to human gene names
+human2mouse_orthologs <- data.table::fread(paste0(outdir, "/human_mouse_orthologs.txt.gz"), data.table = FALSE)
+
+# The genes from the shRNA screen selected as more essential to AML than WT
+candidate_aml <-
+  c(
+    "ENSMUSG00000030231_Plekha5", "ENSMUSG00000032300_1700017B05Rik",
+    "ENSMUSG00000040247_Tbc1d10c", "ENSMUSG00000020732_Rab37",
+    "ENSMUSG00000037525_Bcdin3d", "ENSMUSG00000055322_Tns1",
+    "ENSMUSG00000028073_Pear1", "ENSMUSG00000026471_Mr1",
+    "ENSMUSG00000066036_Ubr4", "ENSMUSG00000040466_Blvrb",
+    "ENSMUSG00000056116_H2-T22", "ENSMUSG00000032238_Rora",
+    "ENSMUSG00000032348_Gsta4", "ENSMUSG00000042770_Hebp1",
+    "ENSMUSG00000057234_Mettl15", "ENSMUSG00000033313_Fbxl8",
+    "ENSMUSG00000018171_Vmp1", "ENSMUSG00000027605_Acss2"
+  )
+
+candidate_aml <-
+  data.frame(mouse_id = gsub("_.*", "", candidate_aml)) %>%
+  dplyr::left_join(x = ., y = human2mouse_orthologs, by = "mouse_id") %>%
+  dplyr::mutate(used_in_analysis = ifelse(is.na(human_id) | human_name == "", FALSE, TRUE))
+
+knitr::kable(candidate_aml)
+
+# We use the "specificDxAtAcquisition" annotation as subtypes to test against
+# and retain only subtypes with > 5 cases
+specific1 <- table(se_beataml$specificDxAtAcquisition)
+subset1 <- names(specific1[specific1 > 5])
+subset2 <- c(
+  which(se_beataml$specificDxAtAcquisition %in% subset1),
+  grep("healthy", se_beataml$sampletype)
+) %>% unique()
+
+se_beataml_subset <- se_beataml[, subset2]
+se_beataml_subset$group <- se_beataml_subset$specificDxAtAcquisition
+se_beataml_subset$group[grep("healthy", se_beataml_subset$sampletype)] <- "healthy control"
+se_beataml_subset$group <- relevel(factor(se_beataml_subset$group), "healthy control")
+
+# Filter for genes with sufficient counts
+keep <- edgeR::filterByExpr(assay(se_beataml_subset, "counts"), group = se_beataml_subset$group)
+se_beataml_subset <- se_beataml_subset[keep, ]
+
+# Design for DE -- a simple pairwise healthy vs rest design
+beataml_design <- stats::model.matrix(~ se_beataml_subset$group)
+colnames(beataml_design) <- gsub(".*subset\\$group", "", colnames(beataml_design))
+
+# limma-trend workflow
+fit_beataml <-
+  limma::lmFit(assay(se_beataml_subset, "logcpm"),
+    design = beataml_design,
+    trend = TRUE, robust = TRUE
+  ) %>%
+  limma::eBayes(.)
+
+genes <-
+  candidate_aml %>%
+  dplyr::filter(!is.na(human_id) & human_name != "") %>%
+  dplyr::mutate(name = paste(human_id, human_name, sep = "_")) %>%
+  dplyr::pull(name)
+
+# The argument is called "p.value" but it filters on FDR, so it is MT-corrected
+res_beataml <-
+  limma::decideTests(fit_beataml, p.value = 0.01, lfc = log2(1.5))[rownames(fit_beataml) %in% genes, ] %>%
+  data.frame() %>%
+  dplyr::select(!X.Intercept.) %>%
+  dplyr::mutate(rs = rowSums(.)) %>%
+  dplyr::arrange(-rs) %>%
+  dplyr::select(-rs) %>%
+  magrittr::set_colnames(colnames(beataml_design)[2:length(colnames(beataml_design))])
+
+# binarize
+new_rn <-
+  data.frame(human_id = gsub("_.*", "", rownames(res_beataml))) %>%
+  dplyr::left_join(x = ., y = candidate_aml, by = "human_id") %>%
+  dplyr::mutate(name = case_when(
+    human_name != toupper(mouse_name) ~ paste0(human_name, " (Mouse: ", mouse_name, ")"),
+    TRUE ~ human_name
+  )) %>%
+  dplyr::pull(name)
+
+new_cn <-
+  data.frame(group = colnames(res_beataml)) %>%
+  dplyr::left_join(x = ., y = as.data.frame(table(se_beataml_subset$group)), by = c("group" = "Var1")) %>%
+  dplyr::mutate(name = paste0(group, " (n=", Freq, ")")) %>%
+  dplyr::pull(name)
+
+use_cols <- list.ggplot$colorblind_cols[2:(length(colnames(res_beataml)) + 1)]
+names(use_cols) <- new_cn
+
+fs <- 10
+tannot <- HeatmapAnnotation(
+  diagnosis = new_cn,
+  col = list(diagnosis = use_cols),
+  annotation_name_gp = gpar(fontsize = fs, fontface = "bold")
+)
+
+
+colramp <- circlize::colorRamp2(c(-1, 0, 1), c("cornflowerblue", "grey10", "darkmagenta"))
+
+in_heatmap_data <-
+  res_beataml %>%
+  magrittr::set_rownames(new_rn) %>%
+  magrittr::set_colnames(new_cn)
+
+hm_beataml <-
+  Heatmap(as.matrix(in_heatmap_data),
+    col = colramp,
+    top_annotation = tannot,
+    column_title = NULL,
+    show_column_names = FALSE,
+    cluster_columns = FALSE,
+    cluster_rows = FALSE,
+    row_names_gp = gpar(fontsize = fs),
+    column_names_gp = gpar(fontsize = fs),
+    heatmap_legend_param = list(
+      at = c(-1, 0, 1),
+      color_bar = "discrete",
+      title = "DEG status",
+      legend_direction = "horizontal",
+      title_position = "topcenter",
+      title_gp = gpar(fontsize = fs, fontface = "bold")
+    )
+  )
+
+pdf(NULL)
+Figure_4A <-
+  ComplexHeatmap::draw(hm_beataml,
+    heatmap_legend_side = "top",
+    padding = unit(c(2, 2, 2, 2), "mm"),
+    annotation_legend_side = "top"
+  )
+invisible(dev.off())
+
+Figure_4A
+
+# The first 6 genes as boxplots
+genes_for_box <- rownames(res_beataml)[1:6]
+
+data_for_box <-
+  assay(se_beataml_subset, "logcpm") %>%
+  data.frame(., check.names = FALSE) %>%
+  tibble::rownames_to_column("Gene") %>%
+  dplyr::filter(Gene %in% genes_for_box)
+
+Figure_4B <-
+  data_for_box %>%
+  tibble::column_to_rownames("Gene") %>%
+  rowScale(.) %>%
+  scale_by_quantile(., .01, .99) %>%
+  data.frame(., check.names = FALSE) %>%
+  tibble::rownames_to_column("Gene") %>%
+  reshape2::melt() %>%
+  dplyr::left_join(
+    x = ., y = data.frame(variable = colnames(se_beataml_subset), group = se_beataml_subset$group),
+    by = "variable"
+  ) %>%
+  dplyr::mutate(human_id = gsub("_.*", "", Gene)) %>%
+  dplyr::left_join(x = ., y = candidate_aml, by = "human_id") %>%
+  dplyr::mutate(Gene = case_when(
+    human_name != toupper(mouse_name) ~ paste0(human_name, " (", mouse_name, ")"),
+    TRUE ~ human_name
+  )) %>%
+  dplyr::arrange(human_name) %>%
+  dplyr::mutate(Gene = factor(Gene, levels = c("RAB37", "PLEKHA5", "C15orf39 (1700017B05Rik)", "VMP1", "ACSS2", "FBXL8"))) %>%
+  ggplot(aes(x = group, y = value, fill = group)) +
+  geom_boxplot(outlier.size = .25) +
+  facet_wrap(~Gene, ncol = 3) +
+  scale_fill_manual(values = list.ggplot$colorblind_cols) +
+  xlab("") +
+  ylab("relative expression") +
+  theme_bw(base_size = 12) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) +
+  theme(legend.position = "none", strip.background = element_rect(fill = "white")) +
+  geom_segment(aes(x = 1, y = -3, xend = 1, yend = -2),
+    arrow = arrow(length = unit(.25, "cm")),
+    lineend = "butt", linejoin = "mitre"
+  )
+
+Figure_4B
+```

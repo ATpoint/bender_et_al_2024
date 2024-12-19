@@ -1,0 +1,474 @@
+---
+title: "Bender et al (2024) -- EMBO"
+subtitle: Proteome
+author:
+- name: Alexander Bender
+  affiliation: Institute of Molecular Tumor Biology, Muenster/Germany
+date: "`r paste('Compiled:', format(Sys.time(), '%d-%b-%Y'))`"
+output:
+  rmdformats::readthedown:
+    code_folding: show
+    keep_md: false
+    highlight: tango
+    toc_float:
+      collapsed: false
+editor_options: 
+  markdown: 
+    wrap: 200
+params:
+  save_final: true
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+# Setup
+
+Define root directory that contains the folder with source data. Run script that
+loads packages and define document-specific variables.
+
+```{r setup}
+
+# Inside this Docker container we mount the directory with all the source data as "/projectdir/"
+rootdir <- "/projectdir/"
+source(paste0(rootdir, "/runStartup.R"))
+ensembl_version <- 100
+```
+
+# Proteome analysis
+
+Annotate the protein identifiers from the MaxQuant output and convert to gene names.
+
+```{r proteome_lookup}
+
+# Load the raw data
+proteome_data_as_is <-
+  openxlsx::read.xlsx(paste0(rootdir, "/source_data/Dataset_EV_7.xlsx"), sheet = "Proteome") %>%
+  as_tibble() %>%
+  dplyr::rename(protein_id = Majority.protein.IDs) %>%
+  dplyr::select(starts_with(c("WT", "KO", "protein_id"))) %>%
+  dplyr::mutate(row_identifier = 1:nrow(.))
+
+# Version 100 is what we used throughout the project (=GENCODE vM25)
+mouse_mart <- useEnsembl("genes", dataset = "mmusculus_gene_ensembl", version = ensembl_version)
+
+# Make two queries as each is restricted to three attributes
+mm1 <- biomaRt::getBM(
+  attributes = c("mgi_symbol", "uniprotsptrembl", "uniprotswissprot"),
+  mart = mouse_mart
+)
+
+mm2 <- biomaRt::getBM(
+  attributes = c("ensembl_gene_id", "mgi_symbol", "protein_id"),
+  mart = mouse_mart
+)
+
+# Ensure that names are identical to GTF so geneID_geneName
+gtf <-
+  rtracklayer::import("https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M25/gencode.vM25.annotation.gtf.gz") %>%
+  data.frame() %>%
+  dplyr::filter(type == "gene")
+
+# Long pipe to combine the gtf and Ensembl lookup tables into a single table,
+# removing entries with missing gene names:
+mm_mgi_protein <-
+  base::merge(
+    x = mm1, by.x = "mgi_symbol",
+    y = mm2, by.y = "mgi_symbol",
+    sort = TRUE, all.x = TRUE, all.y = TRUE
+  ) %>%
+  dplyr::filter(mgi_symbol != "" & ensembl_gene_id != "") %>%
+  dplyr::left_join(
+    x = .,
+    y = gtf %>%
+      dplyr::select(gene_id) %>%
+      dplyr::mutate(ensembl_gene_id = gsub("\\..*", "", gene_id)),
+    by = "ensembl_gene_id"
+  ) %>%
+  dplyr::mutate(ensembl_gene_id = gene_id) %>%
+  dplyr::select(-gene_id) %>%
+  dplyr::mutate(name = paste(ensembl_gene_id, mgi_symbol, sep = "_")) %>%
+  dplyr::select(name, uniprotsptrembl, uniprotswissprot, protein_id) %>%
+  reshape2::melt(id.vars = "name", variable.name = "database", value.name = "identifier") %>%
+  unique() %>%
+  dplyr::filter(identifier != "") %>%
+  dplyr::mutate(A = gsub("\\..*", "", name), B = gsub(".*_", "", name), name = paste0(A, "_", B)) %>%
+  dplyr::select(-A, -B)
+
+rm(gtf)
+
+# Match peptides with genes. In case there are several peptides of the same
+# gene we keep the one with largest average expression
+proteome_data_cleaned <-
+  proteome_data_as_is %>%
+  tidyr::separate_rows(protein_id, sep = ";") %>%
+  dplyr::left_join(
+    x = ., y = mm_mgi_protein, by = c("protein_id" = "identifier")
+  ) %>%
+  dplyr::filter(!is.na(name)) %>%
+  dplyr::group_by(row_identifier) %>%
+  dplyr::summarize(., Gene = paste(unique(name), collapse = ";")) %>%
+  dplyr::left_join(x = ., y = proteome_data_as_is, by = "row_identifier") %>%
+  dplyr::select(-row_identifier) %>%
+  dplyr::filter(!grepl(";", Gene)) %>%
+  magrittr::set_colnames(gsub("^KO", "HoxURE_rep", gsub("^WT", "HoxWT_rep", colnames(.)))) %>%
+  dplyr::mutate(across(contains("_rep"), as.numeric)) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(mean = rowMeans(across(where(is.numeric)))) %>%
+  dplyr::arrange(-mean) %>%
+  dplyr::distinct(Gene, .keep_all = TRUE) %>%
+  dplyr::arrange(Gene) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate_all(~ ifelse(is.nan(.), NA, .)) %>%
+  dplyr::select(!mean) %>%
+  data.frame()
+
+# Remove entries with >= 2 NAs in both groups:
+blacklisted_na <-
+  lapply(
+    unique(gsub("_rep.*", "", grep("_rep", colnames(proteome_data_cleaned), value = TRUE))),
+    function(x) {
+      s <- proteome_data_cleaned %>%
+        tibble::column_to_rownames("Gene") %>%
+        dplyr::select(contains(x))
+      d <- data.frame(rowSums(is.na(s)) > 1) %>% set_colnames(x)
+      return(d)
+    }
+  ) %>%
+  do.call(cbind, .) %>%
+  dplyr::mutate(isna = rowSums(.)) %>%
+  dplyr::filter(isna == 2) %>%
+  tibble::rownames_to_column("gene") %>%
+  dplyr::pull(gene)
+
+filtered <-
+  proteome_data_cleaned %>%
+  dplyr::filter(!Gene %in% blacklisted_na) %>%
+  tibble::column_to_rownames("Gene") %>%
+  dplyr::select(contains("_rep"))
+
+se <- SummarizedExperiment(assays = list(lfq = filtered))
+
+# Now impute 100 times and average. Average code taken from:
+# https://stackoverflow.com/questions/26018216/calculating-mean-of-multiple-matrices-in-r
+X <-
+  bplapply(1:100, BPPARAM = bpparam, function(x) {
+    set.seed(x)
+    Biobase::exprs(MSnbase::impute(as(se, "MSnSet"), method = "MinProb"))
+  })
+
+Y <- do.call(cbind, X)
+Y <- array(Y, dim = c(dim(X[[1]]), length(X)))
+
+imputed <-
+  colMeans(aperm(Y, c(3, 1, 2)), na.rm = TRUE) %>%
+  data.frame() %>%
+  magrittr::set_colnames(colnames(se)) %>%
+  magrittr::set_rownames(rownames(se))
+
+rm(X, Y)
+invisible(gc())
+
+# Differential analysis with limma
+group <- factor(gsub("_rep.*", "", colnames(imputed)), c("HoxWT", "HoxURE"))
+design <- stats::model.matrix(~group)
+fit <- limma::eBayes(limma::lmFit(imputed, design = design), robust = TRUE)
+tt <- limma::topTable(fit, coef = 2, number = Inf) %>% data.frame(Gene = rownames(.), .)
+
+ma_lab <-
+  tt %>%
+  dplyr::mutate(label = case_when(
+    grepl("_Spi1$", Gene) ~ "PU.1",
+    TRUE ~ ""
+  )) %>%
+  dplyr::pull(label)
+
+Figure_2D <-
+  vizzy::ggMAplot(
+    xval = tt$logFC, yval = -log10(tt$adj.P.Val), pval = tt$adj.P.Val, preset = "volcano",
+    labels = ma_lab, xval.thresh = log2(1.5), xlim = c(-6, 6), point.size = .75
+  ) +
+  list.ggplot$theme(base_size = 12) +
+  theme(legend.position = "bottom", legend.title = element_blank()) +
+  ggrepel::geom_label_repel(aes(label = labels),
+    show.legend = FALSE,
+    color = "black", min.segment.length = 0,
+    nudge_x = -2, nudge_y = -.1, max.overlaps = Inf
+  ) +
+  guides(colour = guide_legend(override.aes = list(size = 3))) + coord_fixed()
+
+Figure_2D
+
+# fGSEA: proteome against the scRNA-seq signatures
+r <- tt[, c("Gene", "logFC")]
+r <- r %>% dplyr::arrange(-logFC)
+ranked <- r$logFC
+names(ranked) <- r$Gene
+
+signatures <- openxlsx::read.xlsx(paste0(outdir, "/Dataset_EV2_raw.xlsx")) %>%
+  filter(!signature == "all_genes_tested")
+signatures_list <- split(signatures$gene, signatures$signature)
+
+set.seed(1)
+fg <- suppressWarnings(fgsea::fgseaMultilevel(pathways = signatures_list, stats = ranked, eps = 0))
+fg$leadingEdge <- unlist(lapply(fg$leadingEdge, function(x) paste(x, collapse = ",")))
+
+proteome_fgsea <- list()
+for (i in 1:nrow(fg)) {
+  proteome_fgsea[[paste0("fgsea_", fg$pathway[i])]] <-
+    plot_fgsea(pathway = signatures_list[[fg$pathway[i]]], stats = ranked, ticksSize = .05, add_cutoff = FALSE) +
+    theme_bw(base_size = 10) +
+    ggtitle(paste0("signature", i), paste("FDR =", format(fg$padj[i], digits = 2))) +
+    ylim(c(-.7, .7))
+
+  if (i %in% c(2, 4)) {
+    proteome_fgsea[[paste0("fgsea_", fg$pathway[i])]] <-
+      proteome_fgsea[[paste0("fgsea_", fg$pathway[i])]] +
+      ylab(element_blank()) +
+      theme(axis.title.y = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank())
+  }
+
+  if (i %in% c(1, 2)) {
+    proteome_fgsea[[paste0("fgsea_", fg$pathway[i])]] <-
+      proteome_fgsea[[paste0("fgsea_", fg$pathway[i])]] +
+      xlab(element_blank()) +
+      theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank())
+  }
+}
+rm(i)
+
+Figure_2E <-
+  patchwork::wrap_plots(proteome_fgsea, nrow = 2)
+
+Figure_2E
+
+# Compare cellline transcriptome with proteome
+de_res <- data.table::fread(paste0(outdir, "/03_rnaseq_cellline_deseq2.txt.gz"), data.table = FALSE)
+
+transcriptome <-
+  de_res %>% # that is the DESeq2 DE result from the cellline RNA-seq above
+  dplyr::select(-lfcSE) %>%
+  tibble::remove_rownames() %>%
+  tibble::column_to_rownames("Gene") %>%
+  magrittr::set_colnames(paste0("t_", colnames(.))) %>%
+  tibble::rownames_to_column("Gene")
+
+proteome <-
+  tt %>%
+  dplyr::select(Gene, logFC, AveExpr, P.Value, adj.P.Val) %>%
+  magrittr::set_colnames(c("Gene", "logFC", "baseMean", "pvalue", "padj")) %>%
+  tibble::remove_rownames() %>%
+  tibble::column_to_rownames("Gene") %>%
+  magrittr::set_colnames(paste0("p_", colnames(.))) %>%
+  tibble::rownames_to_column("Gene")
+
+merged <-
+  dplyr::full_join(x = transcriptome, y = proteome, by = "Gene") %>%
+  dplyr::filter(!is.na(p_logFC) & !is.na(t_logFC))
+
+FDR <- 0.05
+LFC <- log2(1.5)
+
+merged <-
+  merged %>%
+  dplyr::mutate(
+    p_signif = ifelse(p_padj < FDR & abs(p_logFC) > LFC, TRUE, FALSE),
+    t_signif = ifelse(t_padj < FDR & abs(t_logFC) > LFC, TRUE, FALSE)
+  ) %>%
+  dplyr::filter(p_signif | t_signif) %>%
+  dplyr::mutate(significance = case_when(
+    p_signif & t_signif & (sign(t_logFC) == sign(p_logFC)) ~ "both",
+    p_signif & t_signif & (sign(t_logFC) != sign(p_logFC)) ~ "opposite",
+    p_signif & !t_signif ~ "only proteome",
+    !p_signif & t_signif ~ "only transcriptome",
+    TRUE ~ "none"
+  )) %>%
+  dplyr::group_by(significance) %>%
+  dplyr::mutate(
+    key = n(),
+    percentage = 100 * key / nrow(.),
+    y = factor(paste0(significance, " (", key, " -- ", round(percentage, 1), "%)"))
+  )
+
+# Enrichments for the different sets:
+list.genes <- list()
+
+# all upregulatd proteins
+list.genes$ure_higher_proteome_all <-
+  merged %>%
+  dplyr::filter(p_signif & p_logFC > LFC) %>%
+  pull(Gene)
+
+# all downregulated proteins
+list.genes$ure_lower_proteome_all <-
+  merged %>%
+  dplyr::filter(p_signif & p_logFC < LFC) %>%
+  pull(Gene)
+
+# all upregulated transcripts
+list.genes$ure_higher_txtome_all <-
+  merged %>%
+  dplyr::filter(t_signif & t_logFC > LFC) %>%
+  pull(Gene)
+
+# all upregualted transcripts
+list.genes$ure_lower_txtome_all <-
+  merged %>%
+  dplyr::filter(t_signif & t_logFC < LFC) %>%
+  pull(Gene)
+
+# upregulated in both
+list.genes$ure_higher_proteome_and_txtome <-
+  merged %>%
+  dplyr::filter(significance == "both" & p_logFC > 0) %>%
+  pull(Gene)
+
+# downregulated in both
+list.genes$ure_lower_proteome_and_txtome <-
+  merged %>%
+  dplyr::filter(significance == "both" & p_logFC < 0) %>%
+  pull(Gene)
+
+# upregulated only in proteome
+list.genes$ure_higher_proteome_only <-
+  merged %>%
+  dplyr::filter(significance == "only proteome" & p_logFC > 0) %>%
+  pull(Gene)
+
+# downregulated only in proteome
+list.genes$ure_lower_proteome_only <-
+  merged %>%
+  dplyr::filter(significance == "only proteome" & p_logFC < 0) %>%
+  pull(Gene)
+
+# upregulated only in txtome
+list.genes$ure_higher_txtome_only <-
+  merged %>%
+  dplyr::filter(significance == "only transcriptome" & t_logFC > 0) %>%
+  pull(Gene)
+
+# downregualted only in txtome
+list.genes$ure_lower_txtome_only <-
+  merged %>%
+  dplyr::filter(significance == "only transcriptome" & t_logFC < 0) %>%
+  pull(Gene)
+
+# sort by gene name:
+list.genes <-
+  sapply(names(list.genes), function(x) {
+    y <- list.genes[[x]]
+    idx <- order(gsub(".*_", "", y), decreasing = FALSE)
+    data.frame(y[idx]) %>% set_colnames(x)
+  }, simplify = FALSE)
+
+# We do tryCatch here because these legacy versions of gprofiler2 sometimes choke
+gprofiler2::set_base_url("http://biit.cs.ut.ee/gprofiler_archive3/e105_eg52_p16")
+Dataset_EV4 <- tryCatch(
+  expr = run_gost(gsub(".*_", "", list.genes$ure_higher_proteome_all[, 1]), FDR.threshold = .05),
+  error = function(e) {
+    NULL
+  }
+)
+
+if (is.null(Dataset_EV4)) {
+  stop("Stop rendering here because gprofiler2 crashed - sorry!")
+}
+
+knitr::kable(head(Dataset_EV4, 10))
+
+# Plot the terms for all proteins up with FDR < .05 and FC > 2
+toplot_proteins_up <-
+  Dataset_EV4 %>%
+  dplyr::arrange((-log10(pvalue))) %>%
+  dplyr::mutate(isize = as.numeric(isize)) %>%
+  dplyr::distinct(Term, .keep_all = TRUE) %>%
+  dplyr::mutate(Term = factor(Term, levels = as.character(Term)))
+
+full_terms_protein_up <-
+  lapply(1:nrow(toplot_proteins_up), function(x) {
+    trm <- toplot_proteins_up$Term[[x]]
+    gns <- toplot_proteins_up %>%
+      dplyr::filter(Term == trm) %>%
+      dplyr::pull(Genes) %>%
+      stringr::str_split(., ",") %>%
+      unlist()
+
+    # check where the genes come from
+    cbind(
+      toplot_proteins_up[x, ],
+      data.frame(
+        total_genes = length(gns),
+        both_txtome_proteome = sum(gns %in% gsub(".*_", "", list.genes$ure_higher_proteome_and_txtome[, 1])),
+        only_proteome = sum(gns %in% gsub(".*_", "", list.genes$ure_higher_proteome_only[, 1])),
+        only_txtome = sum(gns %in% gsub(".*_", "", list.genes$ure_higher_txtome_only[, 1]))
+      )
+    )
+  }) %>% do.call(rbind, .)
+
+#---------------------------------------------
+# the plot visualizing the Table_S6ichments
+bsize <- 10
+pp1 <-
+  full_terms_protein_up %>%
+  arrange(pvalue) %>%
+  # head(., 20) %>%
+  droplevels.data.frame(.) %>%
+  ggplot(aes(x = -log10(pvalue), y = Term, label = isize)) +
+  geom_blank() +
+  geom_hline(yintercept = 1:nrow(toplot_proteins_up), size = .1, lty = 2) +
+  geom_label(size = 3, label = toplot_proteins_up$isize, fill = "white", color = "black") +
+  theme_bw(base_size = bsize) +
+  xlim(c(0, 15))
+
+# highlight terms (y-axis) we consider related to autophagy
+custom_y <- levels(full_terms_protein_up$Term)
+custom_y_face <-
+  dplyr::if_else(
+    custom_y %in%
+      c(
+        "Lysosome", "Membrane Trafficking", "Peroxisome", "Peroxisomal protein import",
+        "Mitophagy - animal", "Autophagy - animal"
+      ),
+    "bold", "plain"
+  )
+
+custom_y_size <-
+  dplyr::if_else(
+    custom_y %in%
+      c(
+        "Lysosome", "Membrane Trafficking", "Peroxisome", "Peroxisomal protein import",
+        "Mitophagy - animal", "Autophagy - animal"
+      ),
+    12, 10
+  )
+
+pp1 <- pp1 + theme(axis.text.y = element_text(face = custom_y_face, size = custom_y_size))
+
+pp2 <-
+  full_terms_protein_up %>%
+  dplyr::select(Term, both_txtome_proteome, only_proteome) %>%
+  reshape2::melt() %>%
+  dplyr::mutate(category = factor(as.character(variable))) %>%
+  dplyr::group_by(Term) %>%
+  dplyr::mutate(
+    value = 100 * value / sum(value),
+    category = factor(gsub(
+      "both_txtome_proteome", "upregulated transcriptome & proteome",
+      gsub("only_proteome", "upregulated only proteome", category)
+    ))
+  ) %>%
+  ggplot(aes(x = value, y = Term, fill = category)) +
+  geom_bar(stat = "identity") +
+  theme_bw(base_size = bsize) +
+  xlab("percentage") +
+  ylab(element_blank()) +
+  scale_fill_manual(values = list.ggplot$colorblind_cols[c(1, 2)])
+
+Figure_5A <-
+  (pp1 + ylab(element_blank())) |
+    (pp2 + theme(axis.text.y = element_blank(), legend.position = "bottom", legend.title = element_blank()) + guides(fill = guide_legend(ncol = 1)))
+
+Figure_5A
+```

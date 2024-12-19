@@ -1,0 +1,511 @@
+---
+title: "Bender et al (2024) -- EMBO"
+subtitle: ChIP-seq
+author:
+- name: Alexander Bender
+  affiliation: Institute of Molecular Tumor Biology, Muenster/Germany
+date: "`r paste('Compiled:', format(Sys.time(), '%d-%b-%Y'))`"
+output:
+  rmdformats::readthedown:
+    code_folding: show
+    keep_md: false
+    highlight: tango
+    toc_float:
+      collapsed: false
+editor_options: 
+  markdown: 
+    wrap: 200
+params:
+  save_final: true
+  run_homer: false
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+# Setup
+
+Define root directory that contains the folder with source data. Run script that
+loads packages and define document-specific variables.
+
+```{r setup}
+
+# Inside this Docker container we mount the directory with all the source data as "/projectdir/"
+rootdir <- "/projectdir/"
+source(paste0(rootdir, "/runStartup.R"))
+```
+
+# RUNX ChIP-seq
+
+## Differential analysis between PU.1-cobound and PU.1-unbound
+
+ChIP-seq towards RUNX1 in THP-1 cells with PU.1 knockdown via shRNA or scramble controls. Experiment done in two batches. For peak calling, combine BAMs per batch and call against per-batch IgG. Then use IDR to get consensus between two batches. Merge and use as template for count matrix.
+
+```{r RUNX1_THP1}
+
+orthologs <- data.table::fread(paste0(outdir, "/human_mouse_orthologs.txt.gz"), data.table = FALSE)
+
+signatures <- openxlsx::read.xlsx(paste0(outdir, "/Dataset_EV2_raw.xlsx"))
+
+signature_human <-
+  sapply(unique(signatures$signature), function(x) {
+    dplyr::left_join(
+      y = orthologs %>% mutate(gene = paste(mouse_id, mouse_name, sep = "_")),
+      x = data.frame(gene = signatures[signatures$signature == x, "gene", drop = TRUE]), by = "gene"
+    ) %>%
+      dplyr::filter(!is.na(human_id) & !is.na(human_name) & !human_name == "") %>%
+      dplyr::mutate(x = paste(human_id, human_name, sep = "_")) %>%
+      pull(x) %>%
+      unique()
+  }, simplify = FALSE)
+
+# Load RUNX1 peaks from THP.1
+runx1_counts <- data.table::fread(
+  paste0(rootdir, "/source_data/GSE251672_chipseq_runx1_rawCounts.tsv.gz"),
+  data.table = FALSE
+)
+
+cnames <- colnames(runx1_counts[, 7:ncol(runx1_counts)])
+cnames_split <- str_split_fixed(cnames, "_", 3)
+
+fct_group <- factor(cnames_split[, 1])
+fct_batch <- factor(cnames_split[, 3])
+
+rgs <- str_split_fixed(runx1_counts$Geneid, ":|-", 3)
+rgs <- GRanges(seqnames = rgs[, 1], ranges = IRanges(
+  start = as.numeric(rgs[, 2]),
+  end = as.numeric(rgs[, 3])
+))
+
+dds_runx1 <- DESeqDataSetFromMatrix(
+  countData = runx1_counts[, 7:ncol(runx1_counts)],
+  colData = DataFrame(condition = fct_group, batch = fct_batch),
+  design = ~ condition + batch,
+  rowRanges = rgs
+)
+
+vsd_runx1 <- DESeq2::vst(dds_runx1, blind = FALSE)
+assayNames(vsd_runx1) <- "vst"
+
+# Check clustering by PCA
+runx_pca_data <- plotPCA(vsd_runx1, intgroup = c("condition", "batch"), returnData = TRUE)
+runx_pca_pvar <- attributes(runx_pca_data)$percentVar
+
+Appendix_Figure_S5A <-
+  runx_pca_data %>%
+  ggplot(aes(x = PC1, y = PC2, color = condition, shape = batch)) +
+  geom_point(size = 2) +
+  scale_color_manual(values = list.ggplot$colorblind_cols[c(5, 6)]) +
+  xlab(paste0("PC1 (var.explained=", round(100 * runx_pca_pvar[1], 2), "%)")) +
+  ylab(paste0("PC2 (var.explained=", round(100 * runx_pca_pvar[2], 2), "%)"))
+
+Appendix_Figure_S5A
+
+# Do differential analysis
+rownames(dds_runx1) <- paste0("region_", 1:nrow(dds_runx1))
+dds_runx1 <- DESeq(dds_runx1, parallel = FALSE)
+
+# Use these sifa factors to scale raw bigwig files prior to averaging per condition
+sf_runx <-
+  as.data.frame(sizeFactors(dds_runx1)) %>%
+  rownames_to_column("x") %>%
+  setNames(c("Sample", "SizeFactors"))
+
+# These size factors can be used to normalize bigwig tracks, so basically divide column 4 of the bedGraph by this and then convert to BW for viz
+# write.table(sf_runx, paste0(outdir, "/lists/chipseq_runx1_thp1_sizeFactors.txt"),
+#            col.names=TRUE, row.names=FALSE, sep="\t", quote=FALSE)
+
+# lfc log2(1.1) enriches for logFCs somewhat beyond 1.2 -- just to get rid of tiny significant logFCs
+res_runx1 <- results(dds_runx1, contrast = c("condition", "knockdown", "control"), lfcThreshold = log2(1.1))
+lfc_runx1 <- lfcShrink(dds = dds_runx1, res = res_runx1, contrast = c("condition", "knockdown", "control"), type = "ashr")
+
+Appendix_Figure_5B <-
+  ggMAplot(lfc_runx1$log2FoldChange, -log10(lfc_runx1$padj), lfc_runx1$padj, preset = "volcano", quantiles.y = c(0, 1)) + guides(color = guide_legend(ncol = 1))
+
+Appendix_Figure_5B
+
+# Add PU.1 binding info directly from ReMap2022 database
+con <- gzcon(url("https://remap.univ-amu.fr/storage/remap2022/hg38/MACS2/DATASET/GSE128834.SPI1.THP-1.bed.gz"))
+txt <- readLines(con)
+thp1_pu1 <-
+  read.delim(textConnection(txt), header = FALSE) %>%
+  makeGRangesFromDataFrame(
+    seqnames.field = "V1", start.field = "V2", end.field = "V3", starts.in.df.are.0based = TRUE,
+    keep.extra.columns = FALSE
+  )
+
+dds_runx1_overlap_pu1 <- subsetByOverlaps(dds_runx1, thp1_pu1)
+
+lfc_runx1$pu1 <- rownames(lfc_runx1) %in% rownames(subsetByOverlaps(dds_runx1, thp1_pu1))
+
+Figure_7B <- 
+  lfc_runx1 %>%
+  as.data.frame() %>%
+  dplyr::filter(padj < 0.05) %>%
+  mutate(pu1n = as.numeric(pu1)) %>%
+  ggplot(aes(x = -pu1n, y = log2FoldChange, group = pu1)) +
+  ggpointdensity::geom_pointdensity(size = .1, position = position_jitter(width = .25, seed = 1)) +
+  viridis::scale_color_viridis(name = "density") +
+  scale_x_continuous(breaks = c(-1, 0), labels = c("PU.1 co-bound", "PU.1 un-bound")) +
+  xlab("") +
+  ylab("log2FoldChange") +
+  guides(x = guide_axis(angle = 45))
+
+Figure_7B
+
+#---------------------------
+# Check if regions with more RUNX1 after PU.1 knockdown have a preference for signature 3/4 vs 1/2
+#---------------------------
+
+# First, strict analysis by window-based intersection
+regions_more_runx1 <- lfc_runx1[lfc_runx1$padj < 0.05 & lfc_runx1$log2FoldChange > 0, ]
+regions_less_runx1 <- lfc_runx1[lfc_runx1$padj < 0.05 & lfc_runx1$log2FoldChange < 0, ]
+
+gr_more_runx1 <- rowRanges(dds_runx1[rownames(regions_more_runx1), ])
+mcols(gr_more_runx1) <- NULL
+mcols(gr_more_runx1) <- DataFrame(regions_more_runx1)
+
+# For next step get coordinates of TSS of human GENCODE v34
+gencode_v34_gtf <- "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_34/gencode.v34.annotation.gtf.gz"
+
+human_coords <-
+  rtracklayer::import(gencode_v34_gtf) %>%
+  data.frame() %>%
+  dplyr::filter(type == "transcript") %>%
+  dplyr::select(seqnames, start, end, strand, gene_id, gene_name) %>%
+  dplyr::mutate(gene_id = gsub("\\..*", "", gene_id), gene = paste(gene_id, gene_name, sep = "_")) %>%
+  makeGRangesFromDataFrame(., keep.extra.columns = TRUE)
+
+# Take signature TSS of human homologs and define a window
+coords_signatures <- sapply(paste0("signature", 1:4), function(x) {
+  hc <- human_coords[human_coords$gene %in% signature_human[[x]]]
+  hc <- resize(hc, fix = "start", width = 20000)
+
+  return(hc)
+}, simplify = FALSE)
+
+#------------------------------
+# GSEA-like analysis. Use the RUNX1 peaks in the window around the signature genes, that are not PU.1-bound
+# and treat as a gene set, then use fgsea to assess whether globally signatures 1 and 2 are different in terms of RUNX1
+# binding upon PU.1 knockdown compared to signature 3+4.
+#------------------------------
+
+region_sets <- sapply(names(coords_signatures), function(x) {
+
+  # Overlap between window and non-PU.1-bound regions
+  current <- coords_signatures[[x]]
+  olap <- dds_runx1[dds_runx1 %over% current]
+  olap <- olap[!olap %over% thp1_pu1]
+  region_set <- rownames(olap)
+
+  return(region_set)
+}, simplify = FALSE)
+
+names(region_sets) <- paste0(names(region_sets), "_no.PU1")
+
+r <-
+  as.data.frame(lfc_runx1) %>%
+  arrange(-log2FoldChange) %>%
+  mutate(region = rownames(.)) %>%
+  dplyr::select(region, log2FoldChange)
+
+ranking <- r$log2FoldChange
+names(ranking) <- r$region
+
+set.seed(1)
+fg_runx <- fgsea::fgseaMultilevel(pathways = region_sets, stats = ranking, minSize = 0, maxSize = 99999, eps = 0)
+
+data_runx_fgsea_s1_to_4 <-
+  rbind(
+    data.frame(plot_fgsea(pathway = region_sets$signature1_no.PU1, stats = ranking)$data, group = "signature1_no.PU1"),
+    data.frame(plot_fgsea(pathway = region_sets$signature2_no.PU1, stats = ranking)$data, group = "signature2_no.PU1"),
+    data.frame(plot_fgsea(pathway = region_sets$signature3_no.PU1, stats = ranking)$data, group = "signature3_no.PU1"),
+    data.frame(plot_fgsea(pathway = region_sets$signature4_no.PU1, stats = ranking)$data, group = "signature4_no.PU1")
+  ) %>%
+  dplyr::left_join(x = ., y = data.frame(group = fg_runx$pathway, fdr = fg_runx$padj), by = "group")
+
+formatted_fdr <- sapply(data_runx_fgsea_s1_to_4$fdr, function(p) {
+  rounded_p <- signif(p, digits = 3)
+
+  if (rounded_p < 0.001) {
+    sprintf("%.2e", rounded_p)
+  } else {
+    sprintf("%.2f", rounded_p)
+  }
+})
+
+data_runx_fgsea_s1_to_4$fdr <- formatted_fdr
+data_runx_fgsea_s1_to_4 <-
+  data_runx_fgsea_s1_to_4 %>%
+  dplyr::left_join(x = ., y = as.data.frame(fg_runx) %>% rename(group = pathway), by = "group") %>%
+  # mutate(group=paste(group, paste0("(NES = ", sprintf("%.3f", round(NES, 3)), " -- FDR = ", fdr, ")"))) %>%
+  mutate(
+    PU.1 = factor(
+      if_else(grepl("no.P", group), "PU.1-unbound", "PU.1-bound"),
+      levels = c("PU.1-unbound", "PU.1-bound")
+    ),
+    group = gsub("_.*", "", group)
+  )
+
+# The fGSEA stats
+knitr::kable(unique(data_runx_fgsea_s1_to_4[, c(3:10, 12)]))
+
+# The fGSEa-style plots (somewhat different colors than in the paper because one reviewer did not like the yellow)
+Figure_7E <- 
+  data_runx_fgsea_s1_to_4 %>%
+  filter(PU.1 == "PU.1-unbound") %>%
+  ggplot(aes(x = x, y = y, color = group)) +
+  geom_line() +
+  theme(legend.position = "top", legend.justification = "left") +
+  scale_color_manual(values = list.ggplot$colorblind_cols, name = "") +
+  guides(color = guide_legend(ncol = 1)) +
+  xlab("ranked RUNX1 peaks") +
+  ylab("enrichment score") +
+  facet_wrap(~PU.1)
+
+Figure_7E
+```
+
+## Integration with published ChIP-seq
+
+Use the loci that are differential in RUNX1 upon PU.1 knockdown. Use this as a basis to show RUNX1, PU.1 H3K4me1, H3K4me3 and H3K27ac ChIP-seq
+and ATAC-seq data.
+
+This code chunk will not be run, simply because the necessary bigwig files are too big to be shared.
+
+```{r coenr}
+
+regions_more_runx1 <- lfc_runx1[lfc_runx1$padj < 0.05 & lfc_runx1$log2FoldChange > 0, ]
+regions_less_runx1 <- lfc_runx1[lfc_runx1$padj < 0.05 & lfc_runx1$log2FoldChange < 0, ]
+
+r_more <- rowRanges(dds_runx1)[rownames(regions_more_runx1)]
+r_more$status <- "more"
+r_less <- rowRanges(dds_runx1)[rownames(regions_less_runx1)]
+r_less$status <- "less"
+
+r_runx <- c(r_more, r_less)
+
+ExtendSize <- 2500
+targets <- r_runx
+targets.extended <- resize(r_runx, fix = "center", width = ExtendSize * 2)
+
+# Will not run this part here, since it takes the full (and quite big) bigwig files which are not easy to share.
+# The code takes these, and only reads into R those ranges that intersect with our loci where we found differential RUNX1 binding.
+# We share the output in the GitHub repository as bigwig_signals.rds and load this here. Code below is for documentation
+
+if(2 < 1){
+    
+  list_bigwigs <- c(
+    paste0(rootdir, "/source_data/published_epigenomics/GSE128834/PU.1_extended_unscaled.bigwig"), # PU.1 ChIP-seq normal THP-1
+    paste0(rootdir, "/source_data/runx1_chipseq_bigwig/knockdown_extended_averaged.bigwig"), # RUNX1 ChIP-seq in THP-1 with PU.1 knockdown
+    paste0(rootdir, "/source_data/runx1_chipseq_bigwig/control_extended_averaged.bigwig"), # as above but non-targeting control
+    paste0(rootdir, "/source_data/published_epigenomics/GSE117864/H3K27ac_extended_unscaled.bigwig"), # H3K27ac in normal THP-1
+    paste0(rootdir, "/source_data/published_epigenomics/GSE96800/THP1_rep2_extended_unscaled.bigwig") # ATAC-seq in normal THP-1
+  )
+  
+  sapply(list_bigwigs, file.exists, simplify = FALSE)
+  
+  # sapply(list_bigwigs, file.exists)
+  bigwigs_all <- bplapply(list_bigwigs, BPPARAM = bpparam, function(x) {
+    b <- rtracklayer::import(x,
+      format = "BigWig",
+      selection = BigWigSelection(targets.extended)
+    )
+    b$score_log2 <- log2(b$score + 1)
+    b$score <- NULL
+    b
+  })
+  
+  names(bigwigs_all) <- c("PU.1", "RUNX1 (PU.1 knockdown)", "RUNX1 (NTC)", "H3K27ac", "ATAC-seq")
+  
+  saveRDS(bigwigs_all, paste0(outdir, "/bigwig_signals.rds"), compress = FALSE)
+  # and then xz-compress with -9 -e to make as small as possible
+  
+} else {
+  
+  bigwigs_all <- readRDS(paste0(outdir, "/bigwig_signals.rds.xz"))
+  
+}
+
+# Transform bigwig selections (GRanges) to a matrix as required for the plotting function
+nms <- lapply(names(bigwigs_all), function(x) {
+  normMatrix <- normalizeToMatrix(
+    signal = bigwigs_all[[x]],
+    target = resize(targets, fix = "center", width = 1),
+    background = 0, keep = c(0, 0.975),
+    target_ratio = 0, mean_mode = "w0",
+    value_column = "score_log2", extend = ExtendSize
+  )
+
+  normMatrix
+})
+
+names(nms) <- names(bigwigs_all)
+
+fs <- 15
+hm_modify <- grep("gp$", names(ht_opt), value = TRUE)
+for (i in hm_modify) {
+  ht_opt[[i]] <- gpar(fontsize = fs)
+}
+
+# Ensure row order is the same for all heatmaps
+r_order <- order(enriched_score(nms$`RUNX1 (NTC)`), decreasing = TRUE)
+
+# Save each heatmap individually, create final figure then in inkscape.
+# Too painful to make this "publication-ready" right from inside R.
+hms <- lapply(names(nms), function(x) {
+  normMatrix <- nms[[x]]
+
+  hm_text2 <- 4
+
+  splitter <- gsub("less", "decreased RUNX1 binding", gsub("more", "increased RUNX1 binding", targets$status))
+  splitter <- factor(splitter, levels = c("increased RUNX1 binding", "decreased RUNX1 binding"))
+
+  hm_cols_annot <- c("#E69F00", "#56B4E9")
+  names(hm_cols_annot) <- levels(splitter)
+
+  ra <- rowAnnotation(RUNX1 = anno_block(
+    gp = gpar(fill = c("#E69F00", "#56B4E9")),
+    labels = levels(splitter),
+    labels_gp = gpar(col = "black")
+  ))
+
+
+  ta <- HeatmapAnnotation(enriched = anno_enriched(
+    gp = gpar(lty = 1, lwd = 3, col = hm_cols_annot), axis_param = list(gp = gpar(fontsize = fs))
+  ))
+
+  EH <- EnrichedHeatmap(
+    mat = normMatrix,
+    row_order = r_order,
+    pos_line = FALSE,
+    column_title = x,
+    use_raster = TRUE,
+    left_annotation = ra,
+    rect_gp = gpar(col = "transparent"),
+    heatmap_legend_param = list(
+      # title_position = "leftcenter-rot",
+      legend_direction = "horizontal",
+      title = "norm. counts [log2]"
+    ),
+    col = c("dodgerblue", "black", "yellow"), # viridis::viridis(100), #c("black", "yellow"),
+    top_annotation = ta,
+    show_row_names = FALSE,
+    row_split = splitter,
+    row_title = NULL,
+    name = "rel.signal"
+  )
+
+  pdf(NULL)
+  EH <- draw(EH, heatmap_legend_side = "bottom")
+  dev.off()
+
+  return(EH)
+})
+
+names(hms) <- gsub("\\)", "", gsub("\\(|\\.| ", "_", names(nms)))
+
+for (i in names(hms)) {
+  assign(x = paste0("plot__heatmap_runx1_chipseq_integrated_with_", make.names(i)), hms[[i]])
+}
+
+# Figure 7D is Inkscape-fu with these five subplots
+Figure_7A_1 <- plot__heatmap_runx1_chipseq_integrated_with_PU_1
+Figure_7A_1
+
+Figure_7A_2 <- plot__heatmap_runx1_chipseq_integrated_with_RUNX1__NTC
+Figure_7A_2
+
+Figure_7A_3 <- plot__heatmap_runx1_chipseq_integrated_with_RUNX1__PU_1_knockdown
+Figure_7A_3
+
+Figure_7A_4 <- plot__heatmap_runx1_chipseq_integrated_with_H3K27ac
+Figure_7A_4
+
+Figure_7A_5 <- plot__heatmap_runx1_chipseq_integrated_with_ATAC.seq
+Figure_7A_5
+
+```
+
+## Motif enrichment
+
+```{r motifies}
+
+a <- getSeq(BSgenome.Hsapiens.UCSC.hg38::BSgenome.Hsapiens.UCSC.hg38, r_more) # more Runx1 after PU.1 KD
+b <- getSeq(BSgenome.Hsapiens.UCSC.hg38::BSgenome.Hsapiens.UCSC.hg38, r_less) # less PU.1 after PU.1 KD
+
+if (!file.exists(paste0(outdir, "/HOCOMOCOv11_core_HUMAN_mono_meme_format.meme"))) {
+  download.file(
+    url = "https://hocomoco11.autosome.org/final_bundle/hocomoco11/core/HUMAN/mono/HOCOMOCOv11_core_HUMAN_mono_meme_format.meme",
+    destfile = paste0(outdir, "/HOCOMOCOv11_core_HUMAN_mono_meme_format.meme")
+  )
+}
+
+ame_out <- paste0(outdir, "/ame/")
+suppressWarnings(dir.create(ame_out))
+
+ame <- memes::runAme(
+  input = a, control = b, database = paste0(outdir, "/HOCOMOCOv11_core_HUMAN_mono_meme_format.meme"),
+  evalue_report_threshold = .Machine$integer.max,
+  meme_path = "/software/meme/bin/", silent = FALSE,
+  outdir = ame_out
+)
+
+amf <- memes::runAme(
+  input = b, control = a, database = paste0(outdir, "/HOCOMOCOv11_core_HUMAN_mono_meme_format.meme"),
+  evalue_report_threshold = .Machine$integer.max,
+  meme_path = "/software/meme/bin/", silent = FALSE,
+  outdir = ame_out
+)
+
+# Cluster all significant motifs based on scale(-log10(evalue))
+motif_enrichments <- list(`increased RUNX1` = ame, `decreased RUNX1` = amf)
+
+unique_motifs <- unlist(lapply(motif_enrichments, function(x) {
+  x %>%
+    filter(adj.pvalue < 10^-10) %>%
+    arrange(evalue) %>%
+    head(., 20) %>%
+    pull(motif_id)
+})) %>% unique()
+
+data__enrichment_motifs <-
+  lapply(names(motif_enrichments), function(x) {
+    motif_enrichments[[x]] %>%
+      dplyr::filter(adj.pvalue < 0.05) %>%
+      mutate(cluster = x)
+  }) %>%
+  bind_rows() %>%
+  mutate(motif_id = gsub("_.*", "", motif_id), motif_id = gsub("BC11A", "BCL11A", motif_id)) %>%
+  group_by(cluster) %>%
+  slice_head(n = 15) %>%
+  pivot_wider(names_from = cluster, id_cols = "motif_id", values_from = "tp_percent", values_fill = 0) %>%
+  column_to_rownames("motif_id")
+
+hm_text <- 5
+
+Figure_7C <-
+  Heatmap(
+    as.matrix(data__enrichment_motifs),
+    clustering_method_rows = "ward.D2",
+    cluster_rows = TRUE, cluster_columns = FALSE,
+    col = c("black", "yellow"), show_row_names = TRUE,
+    heatmap_legend_param = list(
+      legend_direction = "horizontal",
+      legend_width = unit(4, "cm"),
+      legend_position = "bottom",
+      labels_gp = gpar(fontsize = gg2gp(hm_text)),
+      color_bar = "continuous",
+      title_position = "topcenter",
+      title_gp = gpar(fontsize = gg2gp(hm_text))
+    ),
+    name = "percent regions with motif"
+  )
+
+pdf(NULL)
+Figure_7C <- draw(Figure_7C, heatmap_legend_side = "top")
+dev.off()
+Figure_7C
+```

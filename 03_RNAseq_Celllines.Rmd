@@ -1,0 +1,121 @@
+---
+title: "Bender et al (2024) -- EMBO"
+subtitle: RNA-seq analysis from cell lines
+author:
+- name: Alexander Bender
+  affiliation: Institute of Molecular Tumor Biology, Muenster/Germany
+date: "`r paste('Compiled:', format(Sys.time(), '%d-%b-%Y'))`"
+output:
+  rmdformats::readthedown:
+    code_folding: show
+    keep_md: false
+    highlight: tango
+    toc_float:
+      collapsed: false
+editor_options: 
+  markdown: 
+    wrap: 200
+params:
+  save_final: true
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+# Setup
+
+Define root directory that contains the folder with source data. Run script that
+loads packages and define document-specific variables.
+
+```{r setup}
+
+# Inside this Docker container we mount the directory with all the source data as "/projectdir/"
+rootdir <- "/projectdir/"
+source(paste0(rootdir, "/runStartup.R"))
+```
+
+# Bulk RNA-seq
+
+The "rawCounts" from the GEO submission are the output of running `tximport` on the `salmon` transcript abundance estimates with the lengthScaledTPM option.
+
+```{r rnaseq_celllines}
+
+# Normalize and QC
+raw_counts <- data.table::fread(
+  paste0(rootdir, "/source_data/GSE250620_rnaseq_celllines_rawCounts.tsv.gz"),
+  data.table = FALSE
+) %>% tibble::column_to_rownames("gene")
+
+dds <- DESeqDataSetFromMatrix(
+  countData = raw_counts,
+  colData = data.frame(group = factor(gsub("_rep.*", "", colnames(raw_counts)))),
+  design = ~group
+)
+rm(raw_counts)
+
+# Do some prefiltering at this point with edgeR
+dds <- dds[edgeR::filterByExpr(counts(dds), group = dds$group), ]
+dds <- DESeq2::DESeq(dds, quiet = TRUE)
+
+# Subset to only the Hox celllines
+de_res <- DESeq2::results(object = dds, contrast = c("group", "HoxURE", "HoxWT"), alpha = 0.05)
+
+de_res <- DESeq2::lfcShrink(dds = dds, contrast = con, type = "ashr", res = de_res, quiet = TRUE) %>%
+  data.frame() %>%
+  dplyr::rename(., logFC = log2FoldChange) %>%
+  dplyr::mutate(baseMean = log2(baseMean + 1)) %>%
+  data.frame(Gene = rownames(.), .)
+
+# This file is needed in a downstream script
+data.table::fwrite(
+  x = de_res, file = paste0(outdir, "/03_rnaseq_cellline_deseq2.txt"),
+  col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t"
+)
+
+system(command = paste("gzip -f --best", paste0(outdir, "/03_rnaseq_cellline_deseq2.txt")))
+
+signatures <- openxlsx::read.xlsx(paste0(outdir, "/Dataset_EV2_raw.xlsx"))
+signatures_list <- sapply(setdiff(unique(signatures$signature), "all_genes_tested"),
+  function(x) signatures[signatures$signature == x, "gene", drop = TRUE],
+  simplify = FALSE
+)
+
+# Rank by shrunken fold change for DESeq2, that is the input for fGSEA
+rkd <- de_res %>%
+  dplyr::select(Gene, logFC) %>%
+  dplyr::arrange(-logFC)
+
+ranked <- rkd$logFC
+names(ranked) <- rkd$Gene
+
+# Run fGSEA
+set.seed(2020)
+fg <- data.frame(
+  suppressWarnings(
+    fgsea::fgseaMultilevel(pathways = signatures_list, stats = ranked, eps = 0)
+  )
+)
+
+# see the <source_functions.R> script for this function, it's just some ggplot magic
+fgsea_list <- list()
+for (i in 1:4) {
+  fgsea_list[[i]] <-
+    plot_fgsea(
+      pathway = signatures_list[[paste0("signature", i)]],
+      stats = ranked, add_cutoff = FALSE, ticksSize = .025
+    ) +
+    ggtitle(label = paste0("signature", i), paste("FDR =", format(fg$padj[i], digits = 2))) +
+    ylim(-.7, .7)
+}
+names(fgsea_list) <- names(signatures_list)
+
+fgsea_list$signature2 <- fgsea_list$signature2 + xlab("") + ylab("")
+fgsea_list$signature3 <- fgsea_list$signature3 + xlab("") + ylab("")
+fgsea_list$signature4 <- fgsea_list$signature4 + xlab("") + ylab("")
+
+# Figure6F is not the patchwork of the above four plots
+Appendix_Figure_S2D <- patchwork::wrap_plots(fgsea_list, nrow = 2)
+Appendix_Figure_S2D
+```

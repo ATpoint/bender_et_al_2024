@@ -1,0 +1,498 @@
+---
+title: "Bender et al (2024) -- EMBO"
+subtitle: shRNA screen analysis
+author:
+- name: Alexander Bender
+  affiliation: Institute of Molecular Tumor Biology, Muenster/Germany
+date: "`r paste('Compiled:', format(Sys.time(), '%d-%b-%Y'))`"
+output:
+  rmdformats::readthedown:
+    code_folding: show
+    keep_md: false
+    highlight: tango
+    toc_float:
+      collapsed: false
+editor_options: 
+  markdown: 
+    wrap: 200
+params:
+  save_final: true
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+# Setup
+
+Define root directory that contains the folder with source data. Run script that
+loads packages and define document-specific variables.
+
+```{r setup}
+
+# Inside this Docker container we mount the directory with all the source data as "/projectdir/"
+rootdir <- "/projectdir/"
+source(paste0(rootdir, "/runStartup.R"))
+```
+
+# shRNA screen
+
+# Infection bias
+
+Don't be surprised. What in the paper we call URE-AML is here called B22. URE is Hox-URE, and WT is Hox-WT.
+
+```{r shrna_inf_bias}
+
+# The raw counts based on the bowtie2 alignment
+raw_counts_shrna <- read.delim(
+  file = paste0(rootdir, "/source_data/GSE250630_shrna_screen_rawCounts.tsv.gz"),
+  header = TRUE, row.names = "shrna"
+) %>% dplyr::select(-gene)
+
+# sequences <- openxlsx::read.xlsx(paste0(rootdir, "/source_data/shrna_screen_sequences.xlsx"), check.names = FALSE)
+
+# Make pairwise comparisons to explore data -- normalize to NTCs
+y <- edgeR::DGEList(counts = raw_counts_shrna, group = gsub("_rep.*", "", colnames(raw_counts_shrna)))
+
+y_ntc <- y[grepl("NTC", rownames(y)), ]
+y$samples$norm.factors <- edgeR::calcNormFactors(y_ntc)$samples$norm.factors
+rm(y_ntc)
+
+design <- stats::model.matrix(~ 0 + group, y$samples)
+colnames(design) <- gsub("group", "", colnames(design))
+
+v <- limma::voom(y, design = design)
+
+contrasts_voom <- limma::makeContrasts(
+  WT_Input_vs_URE_Input = HoxWT_Input - HoxURE_Input,
+  WT_Input_vs_B22_Input = HoxWT_Input - B22_Input,
+  URE_Input_vs_B22_Input = HoxURE_Input - B22_Input,
+  WT_Final_vs_WT_Input = HoxWT_Final - HoxWT_Input,
+  URE_Final_vs_URE_Input = HoxURE_Final - HoxURE_Input,
+  B22_Final_vs_B22_Input = B22_Final - B22_Input,
+  levels = design
+)
+
+res_voom <- sapply(colnames(contrasts_voom), function(x) {
+  fit <- limma::lmFit(v, design)
+  con <- contrasts_voom[, x]
+  cf <- limma::contrasts.fit(fit, contrasts = con)
+  cf <- limma::eBayes(cf)
+
+  limma::topTable(cf, number = Inf) %>%
+    dplyr::mutate(shRNA = rownames(.)) %>%
+    dplyr::rename(FDR = adj.P.Val, baseMean = AveExpr)
+}, simplify = FALSE)
+
+# Visualize the comparison of (end of screen) vs (input screen)
+use_barcode_levels <- c("killing", "NTC", "signature3")
+use_barcode_alphas <- c(1, 1, 0.35)
+use_shRNA_pointsize <- 1.5
+
+elements <- list()
+
+# this stores the elements of Figure7B and C in the list figure7_elements
+names(res_voom) <- gsub("WT_", "Hox-WT_", gsub("URE_", "Hox-URE_", gsub("B22_", "URE-AML_", names(res_voom))))
+for (x in names(res_voom)) {
+  tmp_ylims <- unlist(lapply(res_voom, function(x) {
+    c(min(x$logFC), max(x$logFC))
+  }))
+
+  elements[[paste0("voom_", x)]] <-
+    res_voom[[x]] %>%
+    mutate(
+      controls = factor(case_when(
+        grepl("NTC", shRNA) ~ "NTC",
+        grepl("Psma|Polr2b|Rpl30", shRNA) ~ "killing",
+        TRUE ~ "signature3"
+      ),
+      levels = use_barcode_levels
+      ),
+      signif = factor(case_when(
+        logFC > 0 & FDR < 0.05 ~ "up",
+        logFC < 0 & FDR < 0.05 ~ "down",
+        TRUE ~ "nonsig"
+      ),
+      levels = c("up", "down", "nonsig")
+      )
+    ) %>%
+    arrange(controls, decreasing = TRUE) %>%
+    ggplot(aes(x = baseMean, y = logFC, color = controls)) +
+    geom_point(aes(size = controls, alpha = controls)) +
+    scale_color_manual(values = c("firebrick", "darkblue", "grey60")) +
+    scale_size_manual(values = c(use_shRNA_pointsize, use_shRNA_pointsize, use_shRNA_pointsize / 2)) +
+    scale_alpha_manual(values = use_barcode_alphas) +
+    ggtitle(gsub("_Input", "", gsub("_Input_vs_", " vs ", x))) +
+    geom_hline(yintercept = 0, lty = 2, size = .25) +
+    ylim(c(floor(min(tmp_ylims)), ceiling(max(tmp_ylims)))) +
+    theme(
+      legend.position = "top",
+      legend.title = element_blank(),
+      legend.justification = "left",
+      legend.margin = margin(0, -.25, 0, 0)
+    ) +
+    guides(size = guide_legend(override.aes = list(size = 3, alpha = 3))) +
+    theme(legend.text = element_text(size = 10))
+
+  # this is simply to ensure that colored dots (blue/red) are on top of the grey ones
+  tmp <- elements[[paste0("voom_", x)]]
+  tmp$data <- tmp$data %>%
+    mutate(ID = seq(1, length(controls))) %>%
+    arrange(-ID)
+  elements[[paste0("voom_", x)]] <- tmp
+  rm(tmp)
+}
+
+# Show that there is no infection bias between celllines
+Appendix_Figure_S3B <-
+  ((elements$`voom_Hox-WT_Input_vs_Hox-URE_Input` + ylim(c(-2, 2)) + ggtitle("")) |
+    (elements$`voom_Hox-URE_Input_vs_URE-AML_Input` + ylim(c(-2, 2)) + ggtitle("")) |
+    (elements$`voom_Hox-WT_Input_vs_URE-AML_Input` + ylim(c(-2, 2)) + ggtitle(""))) +
+    plot_layout(guides = "collect") & theme(legend.position = "top")
+
+Appendix_Figure_S3B
+
+# Not in the paper but show that some NTCs have consistent off-target activity,
+# these will be excluded, it's the blue dots always left-low below the dashed line.
+# We initially had 60 NTCs but removbed 15 because of the off-targeting that was consistent.
+not_in_paper1 <-
+  (elements$`voom_Hox-WT_Final_vs_Hox-WT_Input` | elements$`voom_Hox-URE_Final_vs_Hox-URE_Input`) /
+    (elements$`voom_URE-AML_Final_vs_URE-AML_Input` | plot_spacer())
+
+not_in_paper1
+
+# Identify the names of these 15 NTCs: We reported this to the company and they said they would consider not using them anymore
+luc_blacklisted <-
+  lapply(c("Hox-WT_Final_vs_Hox-WT_Input", "Hox-URE_Final_vs_Hox-URE_Input", "URE-AML_Final_vs_URE-AML_Input"), function(x) {
+    res_voom[[x]] %>%
+      dplyr::filter(grepl("^NTC", shRNA)) %>%
+      dplyr::filter(logFC < -log2(1.5)) %>%
+      dplyr::pull(shRNA) %>%
+      sort()
+  }) %>% unlist()
+
+# 3 means that in all three celllines these were identified as off-targets
+table(luc_blacklisted)
+```
+
+# Call essential genes
+
+```{r shrna_essential_genes_prep}
+
+raw_counts_filtered <- raw_counts_shrna %>% filter(!rownames(.) %in% luc_blacklisted)
+
+# Apply the trick to fool MAGeCK with the NTCs.
+use_luc <-
+  raw_counts_filtered %>%
+  dplyr::filter(grepl("NTC", rownames(raw_counts_filtered))) %>%
+  set_rownames(gsub("NTC", "NTC_for_norm", rownames(.)))
+
+# That is the count table one would save to disk and run MAGeCK on.
+counts_for_mageck <-
+  rbind(
+    raw_counts_filtered, # here this is the actual counts
+    use_luc
+  ) %>% # and this is the "copied" NTCs
+  tibble::rownames_to_column("shrna") %>%
+  dplyr::mutate(gene = gsub("__.*", "", shrna)) %>%
+  dplyr::relocate(shrna, gene)
+
+mageck_dir <- paste0(outdir, "/mageck/")
+
+suppressWarnings(dir.create(mageck_dir, recursive = TRUE))
+
+write.table(
+  x = data.frame(x = grep("_for_norm", counts_for_mageck$gene, value = TRUE)),
+  file = paste0(mageck_dir, "/controls_ntc_mageck.txt"),
+  col.names = FALSE, row.names = FALSE, quote = FALSE, sep = "\n"
+)
+
+write.table(
+  x = counts_for_mageck,
+  file = paste0(mageck_dir, "/counts_for_mageck.txt"),
+  col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t"
+)
+
+Sys.setenv(MAGECKDIR = mageck_dir)
+```
+
+# Run MAGeCK
+
+```{bash run_mageck}
+
+# MAGeCK is available in this Docker container
+
+# Run MAGeCK for each cell line separately. The names provided via the 
+# -t and -c argument tell MAGeCK which columns of the count matrix to use during
+# the current iteration. The 'controls_ntc.txt' contains the names of the rows
+# of the count matrix to use as normalization / null permutation controls,
+# so that is the 45 NTCs.
+
+export PATH="$PATH:$MAGECKPATH"
+
+cd "$MAGECKDIR"
+
+echo 'HoxWT HoxURE B22' \
+| tr " " "\n" \
+| while read p; do
+    mageck test \
+      -k counts_for_mageck.txt \
+      -t ${p}_Final_rep1,${p}_Final_rep2,${p}_Final_rep3 \
+      -c ${p}_Input_rep1,${p}_Input_rep2,${p}_Input_rep3 \
+      --control-gene controls_ntc_mageck.txt --norm-method control --gene-lfc-method alphamedian \
+      -n ${p} --additional-rra-parameters '--min-number-goodsgrna 3 --permutation 10000' --keep-tmp \
+      --normcounts-to-file
+  done < /dev/stdin    
+  
+```
+
+# Analyse MAGeCK results
+
+Require that essential genes have a `neg.fdr` below 0.01. The MAGeCK call above also forced a minimum of
+three "good shRNAs", meaning that three out of five shRNAs must support the call of being an essential gene.
+
+```{r shrna_essential_gene_analysis}
+
+# Read the MAGeCK output we provide in the supplement
+WT_RRA_gene <- read.delim(paste0(mageck_dir, "/HoxWT.gene_summary.txt"))
+WT_RRA_shRNA <- read.delim(paste0(mageck_dir, "/HoxWT.sgrna_summary.txt"))
+URE_RRA_gene <- read.delim(paste0(mageck_dir, "/HoxURE.gene_summary.txt"))
+URE_RRA_shRNA <- read.delim(paste0(mageck_dir, "/HoxURE.sgrna_summary.txt"))
+B22_RRA_gene <- read.delim(paste0(mageck_dir, "/B22.gene_summary.txt"))
+B22_RRA_shRNA <- read.delim(paste0(mageck_dir, "/B22.sgrna_summary.txt"))
+
+# Killing and NTCs were defined by us during library design
+killing_controls <- c("Psma1", "Rpl30", "Polr2b")
+negative_control <- "NTC"
+
+# Extract essential genes as those with FDR < 0.01
+mageck_results <- c("WT_RRA_gene", "URE_RRA_gene", "B22_RRA_gene")
+
+essential_genes_full <-
+  sapply(mageck_results, function(x) {
+    l <- get(x) %>% filter(!grepl(paste(c(killing_controls, negative_control), collapse = "|"), id))
+    l %>% filter(neg.fdr < 0.01)
+  }, simplify = FALSE)
+
+essential_genes <- sapply(essential_genes_full, function(x) x$id, simplify = FALSE)
+
+names(essential_genes_full) <- paste0("MAGeCK_results_", gsub("_RRA_gene", "", names(essential_genes)))
+
+# This is essentially Dataset EV3
+sapply(essential_genes_full, head, simplify = FALSE)
+
+# Collect per-shRNA logFCs, then quantile normalize
+RRA_logFC_raw <-
+  Reduce(
+    function(x, y) merge(x, y, all = TRUE, by = "shRNA"),
+    list(
+      data.frame(shRNA = WT_RRA_shRNA$sgrna, HoxWT = WT_RRA_shRNA$LFC),
+      data.frame(shRNA = URE_RRA_shRNA$sgrna, HoxURE = URE_RRA_shRNA$LFC),
+      data.frame(shRNA = B22_RRA_shRNA$sgrna, B22 = B22_RRA_shRNA$LFC)
+    )
+  ) %>%
+  dplyr::mutate(Gene = gsub("__.*", "", shRNA)) %>%
+  dplyr::relocate(shRNA, Gene)
+
+RRA_logFC_qn <-
+  cbind(
+    RRA_logFC_raw %>% select(contains(c("shRNA", "Gene"))),
+    limma::normalizeQuantiles(RRA_logFC_raw %>% dplyr::select(contains(c("Hox", "B22"))))
+  )
+
+Figure_3A <-
+  RRA_logFC_qn %>%
+  reshape2::melt(variable.name = "Cellline", value.name = "logFC", id.vars = c("shRNA", "Gene")) %>%
+  mutate(
+    label = case_when(
+      Gene %in% killing_controls ~ "killing",
+      grepl(negative_control, Gene) ~ "NTC",
+      TRUE ~ "signature3"
+    ),
+    Cellline = factor(gsub("Hox", "Hox-", gsub("B22", "URE-AML", as.character(Cellline))),
+      levels = c("Hox-WT", "Hox-URE", "URE-AML")
+    )
+  ) %>%
+  ggplot(aes(x = Cellline, y = logFC, color = label, size = label)) +
+  geom_point(position = position_jitter(seed = 1, width = .25), size = .75) +
+  scale_color_manual(values = c("firebrick", "darkblue", "grey")) +
+  xlab("") +
+  scale_size_manual(values = c(2, 2, 2)) +
+  theme(legend.title = element_blank(), legend.position = "top", legend.justification = "left") +
+  guides(x = guide_axis(angle = 22), color = guide_legend(ncol = 1, override.aes = list(size = 3)))
+
+Figure_3A
+
+# Summarize overlap of essential genes in an upset
+Figure_3B <-
+  rbind(
+    data.frame(Celltype = "Hox-WT", Gene = essential_genes$WT),
+    data.frame(Celltype = "Hox-URE", Gene = essential_genes$URE),
+    data.frame(Celltype = "URE-AML", Gene = essential_genes$B22)
+  ) %>%
+  dplyr::mutate(Celltype = factor(Celltype, levels = c("Hox-WT", "Hox-URE", "URE-AML"))) %>%
+  dplyr::group_by(Gene) %>%
+  dplyr::summarize(Celltype = list(Celltype)) %>%
+  ggplot(aes(x = Celltype)) +
+  geom_bar(fill = "grey35") +
+  geom_label(stat = "count", aes(label = after_stat(count)), vjust = 1.5) +
+  scale_x_upset(position = "bottom") +
+  # theme_combmatrix(combmatrix.label.text=element_text(size=10)) +
+  xlab("") +
+  ylab("overlaps")
+
+Figure_3B
+
+# Get differential logFCs for Figure 3C
+differential_logFC <-
+  RRA_logFC_qn %>%
+  dplyr::mutate(shRNA = shRNA, Gene = Gene, URE_WT = HoxURE - HoxWT, B22_WT = B22 - HoxWT) %>%
+  tibble::column_to_rownames("shRNA") %>%
+  dplyr::select(c(Gene, contains(c("_")))) %>%
+  tibble::remove_rownames()
+
+empirical_cutoff <-
+  apply(
+    differential_logFC %>%
+      dplyr::filter(Gene %in% negative_control) %>%
+      dplyr::select(contains("_")),
+    2,
+    function(x) quantile(abs(x), .95)
+  ) %>%
+  as.numeric() %>%
+  mean()
+
+essential_merged <- unique(unlist(essential_genes))
+
+# This table summarizes how many shRNAs per gene support a call that a gene
+# is more or less essential in the given comparison.
+differential_table_candidate <- lapply(essential_merged, function(x) {
+  d <- differential_logFC %>% filter(Gene == x)
+
+  d %>%
+    dplyr::mutate(
+      URE_more_essential_WT = sum(URE_WT < -empirical_cutoff),
+      # URE_less_essential_WT=sum(URE_WT >  empirical_cutoff),
+      B22_more_essential_WT = sum(B22_WT < -empirical_cutoff),
+      # B22_less_essential_WT=sum(B22_WT >  empirical_cutoff)
+    ) %>%
+    dplyr::select(c(Gene, contains(c("_more", "_less")))) %>%
+    unique() %>%
+    tibble::remove_rownames()
+}) %>%
+  do.call(rbind, .) %>%
+  tibble::column_to_rownames("Gene")
+
+# We use the above table to filter for the final differentially-essential genes.
+# This is done with regard to the WT cell line.
+n_is <- 3 # we need evidence that WT is less affected than the other group for that many shRNAs
+n_no <- 1 # we require that no more than that many shRNAs have evidence for the opposite pattern:
+differentially_essential <-
+
+  list(
+
+    # this is the genes more essential to only URE compared to WT
+    kills_URE = differential_table_candidate %>%
+      filter(URE_more_essential_WT >= n_is &
+        B22_more_essential_WT < n_is &
+        rownames(.) %in% essential_genes$URE) %>%
+      rownames(),
+
+    # more essential to only B22 compared to WT
+    kills_B22 = differential_table_candidate %>%
+      dplyr::filter(B22_more_essential_WT >= n_is &
+        URE_more_essential_WT < n_is &
+        rownames(.) %in% essential_genes$B22) %>%
+      rownames(),
+
+    # more essential to URE & B22 compared to WT
+    kills_both = differential_table_candidate %>%
+      dplyr::filter(B22_more_essential_WT >= n_is &
+        URE_more_essential_WT >= n_is &
+        rownames(.) %in% essential_genes$URE &
+        rownames(.) %in% essential_genes$B22) %>%
+      rownames()
+  )
+
+# Post-filter so the "more essential" URE are essential in URE and
+# "more essential" AML are essential in AML
+# To-Do: Formally prefilter so that only essential genes in URE/B22 go into the differential analysis
+# lapply(names(differentially_essential), function(x){
+
+
+# }
+
+# This is then the input for this wonderful monolithic chunk of heatmap code.
+matrix_toplot <- differential_table_candidate %>%
+  dplyr::filter(rownames(.) %in%
+    unlist(differentially_essential))
+
+# Split the heatmap based on the three entries in differentially_essential
+use_row_order <- sapply(differentially_essential,
+  function(x) match(x, rownames(matrix_toplot)),
+  simplify = FALSE
+)
+
+use_row_split <- unlist(lapply(
+  names(use_row_order),
+  function(x) rep(x, length(use_row_order[[x]]))
+))
+
+# Some aesthetic parameters for ComplexHeatmap
+new_fs <- 4
+hm_fs <- gg2gp(new_fs)
+ht_opt$heatmap_row_names_gp <- grid::gpar(fontsize = gg2gp(new_fs))
+ht_opt$heatmap_column_names_gp <- grid::gpar(fontsize = gg2gp(new_fs))
+ht_opt$heatmap_column_title_gp <- grid::gpar(fontsize = gg2gp(new_fs))
+ht_opt$heatmap_row_title_gp <- grid::gpar(fontsize = gg2gp(new_fs))
+
+# Plot heatmap with number of shRNAs supporting the call as being differentially essential
+hm_toplot <- matrix_toplot[unlist(use_row_order), ] %>% dplyr::select(dplyr::contains("more"))
+rownames(hm_toplot) <- gsub(".*_", "", rownames(hm_toplot))
+colnames(hm_toplot) <- gsub("^URE", "Hox-URE", gsub("WT", "Hox-WT", gsub("B22", "URE-AML", colnames(hm_toplot))))
+
+pdf(NULL)
+Figure_3C <-
+  draw(Heatmap(
+    matrix = as.matrix(hm_toplot),
+    col = c("grey95", "grey90", "grey80", "#90A4B4FF", "#638FB4FF", "#0966B4FF"),
+    row_names_gp = grid::gpar(fontsize = hm_fs),
+    column_title_gp = grid::gpar(fontsize = hm_fs),
+    row_title_gp = grid::gpar(fontsize = hm_fs),
+    column_names_gp = grid::gpar(fontsize = hm_fs),
+    heatmap_legend_param = list(
+      legend_direction = "horizontal",
+      legend_width = unit(4, "cm"),
+      legend_position = "bottom",
+      at = c(0, 1, 2, 3, 4, 5),
+      title_gp = gpar(fontface = "plain", fontsize = gg2gp(new_fs)), nrow = 1
+    ),
+    name = "number of supporting shRNAs per gene",
+    cluster_columns = FALSE,
+    column_title = NULL,
+    show_row_dend = FALSE,
+    column_labels = gt_render(gsub("_more_essential_", " > ", colnames(hm_toplot)),
+      rot = 0, padding = unit(c(20, -10, 0, 0), "pt")
+    ),
+    row_split = gsub("_", " ", use_row_split), row_title = NULL
+  ),
+  heatmap_legend_side = "top"
+  )
+invisible(dev.off())
+
+Figure_3C
+```
+
+This chunk is not executed, but documents what was uploaded to the GEO submission as processed files:
+
+```{r, eval = FALSE}
+
+supplement_shrnascreen <- paste0(outdir, "/lists/shrnascreen/")
+suppressWarnings(dir.create(supplement_shrnascreen))
+
+out <- paste0(supplement_shrnascreen, "/counts_raw.txt")
+data.table::fwrite(x = counts_for_mageck, file = out, col.names = TRUE, row.names = FALSE, sep = "\t", quote = FALSE)
+system(paste0("gzip --force --best ", out))
+rm(out)
+```

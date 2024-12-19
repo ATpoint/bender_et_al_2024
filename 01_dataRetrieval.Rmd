@@ -1,0 +1,60 @@
+---
+title: "Bender et al (2024) -- EMBO"
+subtitle: Get human-mouse orthologs from Ensembl via biomaRt
+author:
+- name: Alexander Bender
+  affiliation: Institute of Molecular Tumor Biology, Muenster/Germany
+date: "`r paste('Compiled:', format(Sys.time(), '%d-%b-%Y'))`"
+output:
+  rmdformats::readthedown:
+    code_folding: show
+    keep_md: false
+    highlight: tango
+    toc_float:
+      collapsed: false
+editor_options: 
+  markdown: 
+    wrap: 200
+params:
+  save_final: false
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+# Setup
+
+Define root directory that contains the folder with source data. Run script that
+loads packages and define document-specific variables.
+
+```{r setup}
+
+# Inside this Docker container we mount the directory with all the source data as "/projectdir/"
+rootdir <- "/projectdir/"
+source(paste0(rootdir, "/runStartup.R"))
+ensembl_version <- 100
+```
+
+# Human-Mouse orthologs from Ensembl
+
+Use biomaRt to retrieve orthologs between human and mouse from Ensembl version `ensembl_version`.
+
+```{r orthologs}
+
+human_mart <- biomaRt::useEnsembl("genes", dataset = "hsapiens_gene_ensembl", version = ensembl_version)
+mouse_mart <- biomaRt::useEnsembl("genes", dataset = "mmusculus_gene_ensembl", version = ensembl_version)
+
+human2mouse_orthologs <- biomaRt::getLDS(
+  attributes = c("ensembl_gene_id", "hgnc_symbol"),
+  attributesL = c("ensembl_gene_id", "mgi_symbol"),
+  mart = human_mart, martL = mouse_mart, uniqueRows = TRUE
+) %>% stats::setNames(c("human_id", "human_name", "mouse_id", "mouse_name"))
+
+data.table::fwrite(
+  x = human2mouse_orthologs,
+  file = paste0(outdir, "/human_mouse_orthologs.txt"),
+  col.names = TRUE, row.names = FALSE, quote = FALSE
+)
+```

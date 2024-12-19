@@ -1,0 +1,543 @@
+---
+title: "Bender et al (2024) -- EMBO"
+subtitle: Other experiments and analysis
+author:
+- name: Alexander Bender
+  affiliation: Institute of Molecular Tumor Biology, Muenster/Germany
+date: "`r paste('Compiled:', format(Sys.time(), '%d-%b-%Y'))`"
+output:
+  rmdformats::readthedown:
+    code_folding: show
+    keep_md: false
+    highlight: tango
+    toc_float:
+      collapsed: false
+editor_options: 
+  markdown: 
+    wrap: 200
+params:
+  save_final: true
+  run_homer: false
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+# Setup
+
+Define root directory that contains the folder with source data. Run script that
+loads packages and define document-specific variables.
+
+```{r setup}
+
+# Inside this Docker container we mount the directory with all the source data as "/projectdir/"
+rootdir <- "/projectdir/"
+source(paste0(rootdir, "/runStartup.R"))
+```
+
+# shRNA screen validation
+
+Figure 3D
+
+We later removed the boxes, removed the box dodging and jittered the points a bit horizontally since ggplot messed this up but values are the exact same.
+ggplot is poor at jjitterdodge together with color AND shaping.
+
+```{r fig3d}
+
+source_3d <-
+  openxlsx::read.xlsx(paste0(rootdir, "/source_data/Source_Data_Figure_3/source_data_figure_3d.xlsx"), sheet = "Data") %>%
+  mutate(
+    cell_line = factor(cell_line, c("Hox-WT", "Hox-URE")),
+    target = factor(target, c("Vmp1", "Fbxl8")),
+    shrna = factor(shrna)
+  )
+
+# ANOVA stats
+lapply(unique(source_3d$target), function(x) {
+  source_3d %>%
+    filter(target == x) %>%
+    aov(data = ., formula = percent_survival ~ cell_line + shrna) %>%
+    broom::tidy() %>%
+    filter(term == "cell_line") %>%
+    mutate(target = x)
+}) %>%
+  bind_rows() %>%
+  mutate(p.value = format(p.value, scientific = TRUE, digits = 1), fdr = format(p.adjust(p.value, "BH"), scientific = TRUE, digits = 1))
+
+Figure_3D <-
+  source_3d %>%
+  ggplot(aes(x = target, y = percent_survival, color = cell_line)) +
+  geom_boxplot(outlier.shape = NA, show.legend = FALSE) +
+  geom_point(aes(shape = shrna), position = position_jitterdodge(jitter.width = .2, jitter.height = 0, dodge.width = .1, seed = 1)) +
+  scale_color_manual(values = list.ggplot$genotype_colors)
+
+Figure_3D
+```
+
+Appendix Figure S3F
+
+```{r shrna_val2}
+
+lvl_target_full <- c("NTC", "killing control", "Acss2", "Fbxl8", "Vmp1")
+lvl_target <- setdiff(lvl_target_full, "NTC")
+
+# Load source data
+shrna_validation_data <-
+  openxlsx::read.xlsx(paste0(rootdir, "/source_data/Source_Data_Supplemental/source_data_figure_appendix_3f.xlsx"), sheet = "Data") %>%
+  mutate(
+    day = factor(day, c("day0", "day2", "day7")),
+    target = factor(target, c("NTC", "killing control", "Acss2", "Fbxl8", "Vmp1"))
+  )
+
+# Stats via two-way anova testing the interaction of day and target to answer whether decay in survival
+# for targets is stronger than for NTC
+shrna_validation_stats <- lapply(lvl_target, function(x) {
+  shrna_validation_data %>%
+    filter(target %in% c("NTC", x)) %>%
+    stats::aov(data = ., formula = percent_survival ~ day + target + day:target) %>%
+    stats::anova(.) %>%
+    broom::tidy(.) %>%
+    filter(term == "day:target") %>%
+    mutate(target = x)
+}) %>%
+  bind_rows() %>%
+  mutate(fdr = p.adjust(p.value, "BH"))
+
+shrna_validation_stats
+
+# Plot as lines with jittered dots
+shrna_validation_data_mean <-
+  shrna_validation_data %>%
+  group_by(target, day) %>%
+  summarize(percent_survival = mean(percent_survival))
+
+# Stats from above were added in Inkscape
+Appendix_Figure_S3F <-
+  shrna_validation_data %>%
+  ggplot(aes(x = day, y = percent_survival, color = target)) +
+  geom_point(position = position_jitter(width = .1, height = 0, seed = 11), size = 3) +
+  geom_line(data = shrna_validation_data_mean, aes(x = day, y = percent_survival, color = target, group = target), inherit.aes = FALSE, show.legend = FALSE) +
+  scale_color_manual(values = list.ggplot$colorblind_cols[c(1, 3, 5, 6, 7)]) +
+  scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, 25)) +
+  xlab("timepoint") +
+  ylab("percent survival")
+
+Appendix_Figure_S3F
+```
+
+# Venetoclax
+
+Figure 5F
+
+```{r veneto}
+
+venetoclax <- openxlsx::read.xlsx(paste0(rootdir, "/source_data/Source_Data_Figure_5/source_data_figure_5f.xlsx"), sheet = "Data")
+
+# Kaplan-Meier style, showing percent survival relative to DMSO
+venetoclax_mod <-
+  venetoclax %>%
+  reshape2::melt(variable.name = "timepoint", value.name = "cells_count", measure.vars = grep("^time_", colnames(.), value = TRUE)) %>%
+  mutate(
+    timepoint = factor(paste0(gsub("time_", "", timepoint), "h"), c("0h", "24h", "48h", "72h", "96h")),
+    cell_line = factor(cell_line, c("Hox-WT", "Hox-URE")),
+    treatment = factor(treatment, c("DMSO", "500nM", "1000nM"))
+  ) %>%
+  group_by(cell_line, replicate, timepoint) %>%
+  summarize(percent_survival = 100 * cells_count / cells_count[treatment == "DMSO"], treatment) %>%
+  filter(!treatment %in% "DMSO")
+
+venetoclax_anova <-
+  lapply(c("500nM", "1000nM"), function(conc) {
+    venetoclax_mod %>%
+      filter(treatment %in% conc) %>%
+      aov(data = ., formula = percent_survival ~ cell_line + timepoint + cell_line:timepoint) %>%
+      anova() %>%
+      broom::tidy(.) %>%
+      mutate(treatment = conc) %>%
+      filter(term == "cell_line:timepoint")
+  }) %>%
+  bind_rows() %>%
+  mutate(p.adj = p.adjust(p.value, "BH"))
+
+venetoclax_anova
+
+venetoclax_plotdata <-
+  venetoclax_mod %>%
+  group_by(cell_line, timepoint, treatment) %>%
+  summarize(mean = mean(percent_survival), sd = sd(percent_survival)) %>%
+  mutate(group = paste(cell_line, treatment)) %>%
+  left_join(x = ., y = venetoclax_anova, by = "treatment") %>%
+  mutate(concentration = paste0(treatment, " \n(p.adj = ", round(p.adj, 3), ")\n"))
+
+venetoclax_plotdata$concentration <- factor(
+  venetoclax_plotdata$concentration,
+  unique(venetoclax_plotdata$concentration)
+)
+
+Figure_5F <-
+  venetoclax_plotdata %>%
+  ggplot(aes(x = timepoint, y = mean, color = cell_line, group = group, shape = concentration)) +
+  geom_line(size = 1) +
+  geom_point(size = 4, position = position_jitter(width = .1, seed = 1, height = 0)) +
+  geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = .05, position = position_jitter(width = .1, seed = 1, height = 0)) +
+  scale_color_manual(name = "cell line", values = list.ggplot$genotype_colors) +
+  ylab("% survival relative to vehicle") +
+  scale_y_continuous(limits = c(0, 120), breaks = c(0, 25, 50, 75, 100, 120), labels = c(seq(0, 100, 25), ""))
+
+Figure_5F
+```
+
+# dnRunx survival in Hox cells
+
+Figure 7G. The source data is called "source_data_figure_7h.xlsx" - we apparently have some hickup here.
+
+```{r dnrunx}
+
+dnrunx_survival <-
+  openxlsx::read.xlsx(paste0(rootdir, "/source_data/Source_Data_Figure_7/source_data_figure_7h.xlsx"), sheet = "Data") %>%
+  mutate(cell_line = factor(cell_line, c("Hox-WT", "Hox-URE")))
+
+dnrunx_survival_anova <- aov(percent_survival ~ cell_line + day, dnrunx_survival)
+
+dnrunx_survival_p <-
+  broom::tidy(dnrunx_survival_anova) %>%
+  filter(term == "cell_line") %>%
+  pull(p.value) %>%
+  round(., 5)
+
+# The p-value
+format(dnrunx_survival_p, scientific = FALSE)
+
+Figure_7G <-
+  dnrunx_survival %>%
+  group_by(day, cell_line) %>%
+  summarize(mean_percent_survival = mean(percent_survival)) %>%
+  ggplot(aes(x = day, y = mean_percent_survival, color = cell_line, group = cell_line)) +
+  geom_point(data = dnrunx_survival, aes(x = day, y = percent_survival, color = cell_line), size = 3, position = position_jitter(width = .1, height = 0, seed = 1)) +
+  ggtitle(paste0("two-way anova: p=", dnrunx_survival_p)) +
+  xlab("timepoint") +
+  ylab("% survival\nrelative to empty vector") +
+  scale_color_manual(values = list.ggplot$genotype_colors, name = "")
+
+Figure_7G
+```
+
+# dnRunx in URE-AML
+
+This is Figure 7F, source data is called "source_data_figure_7g.xlsx", again sorry for this hickup during submission.
+
+```{r qpcr_dnrunx}
+
+# Read data and bring to common naming scheme
+qpcr_dnrunx_ureaml <-
+  openxlsx::read.xlsx(paste0(rootdir, "/source_data/Source_Data_Figure_7/source_data_figure_7g.xlsx"), sheet = "Data")
+
+# Stats by ANOVA
+qpcr_dnrunx_stats <-
+  lapply(unique(qpcr_dnrunx_ureaml$target), function(x) {
+    d <- qpcr_dnrunx_ureaml %>% filter(target == x)
+
+    aov(relative_expression ~ sample, d) %>%
+      broom::tidy(.) %>%
+      filter(term == "sample") %>%
+      mutate(target = x) %>%
+      dplyr::select(target, p.value)
+  }) %>%
+  bind_rows() %>%
+  mutate(fdr = round(p.adjust(p.value, "BH"), 4)) %>%
+  knitr::kable(.)
+
+qpcr_dnrunx_stats
+
+qpcr_dnrunx_ureaml_mean <- qpcr_dnrunx_ureaml %>%
+  group_by(target, sample) %>%
+  summarize(relative_expression = mean(relative_expression))
+
+Figure_7F <-
+  qpcr_dnrunx_ureaml_mean %>%
+  ggplot(aes(x = target, y = relative_expression, fill = sample)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_point(data = qpcr_dnrunx_ureaml, aes(y = relative_expression), size = 1, position = position_jitterdodge(seed = 1, jitter.width = .1), show.legend = FALSE) +
+  xlab("") +
+  ylab("relative expression") +
+  guides(x = guide_axis(angle = 90)) +
+  scale_y_continuous(breaks = c(0, .5, 1)) +
+  theme(legend.position = "top", legend.justification = "left") +
+  scale_fill_manual(name = "", values = list.ggplot$colorblind_cols[c(5, 6)])
+
+Figure_7F
+```
+
+# qPCR in THP-1 cells with PU.1 knockdown
+
+```{r qpcr_thp1}
+
+# Read data and bring to common naming scheme
+qpcr_thp1_essential <-
+  openxlsx::read.xlsx(paste0(rootdir, "/source_data/Source_Data_Figure_4/source_data_figure_4c.xlsx"), sheet = "Data") %>%
+  mutate(sample = factor(sample, c("PU.1 KD", "NTC")))
+
+# Get stats by ANOVA, testing the dCT ~ "sample" (dnRunx vs control) blocking for "batch"
+qpcr_thp1_essential_stats <-
+  lapply(unique(qpcr_thp1_essential$target), function(x) {
+    d <- qpcr_thp1_essential %>% filter(target == x)
+    one.way <- aov(relative_expression ~ sample + round, data = d)
+    data.frame(target = x, broom::tidy(one.way) %>% filter(term == "sample"))
+  }) %>%
+  bind_rows() %>%
+  mutate(fdr = p.adjust(p.value, "BH")) %>%
+  arrange(target)
+
+qpcr_thp1_essential_stats
+
+Figure_4C <-
+  qpcr_thp1_essential %>%
+  ggplot(aes(x = sample, y = relative_expression)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitter(width = .2, seed = 1), size = 1) +
+  facet_wrap(~target) +
+  xlab("") +
+  ylab("relative expression") +
+  scale_y_continuous(breaks = c(0, .5, 1), limits = c(0, 1))
+
+Figure_4C
+```
+
+# Autophagy genes
+
+Figure 5B
+
+```{r autophagyMice}
+
+raw_mice <- read.delim(paste0(rootdir, "/source_data/GSE250622_rnaseq_exVivo_rawCounts.tsv.gz"))
+rownames(raw_mice) <- raw_mice$gene
+raw_mice$gene <- NULL
+
+cd <- data.frame(group = gsub("_rep.*", "", colnames(raw_mice)), stringsAsFactors = TRUE)
+
+dds_mice_exvivo <- DESeqDataSetFromMatrix(countData = round(raw_mice), colData = cd, design = ~group)
+levels(dds_mice_exvivo$group) <- c("WT_LSK", "URE_LSK", "WT_GMP", "URE_GMP")
+
+vsd <- DESeq2::vst(dds_mice_exvivo, blind = FALSE)
+
+p1 <- DESeq2::plotPCA(vsd, "group", returnData = TRUE)
+
+# THis is only to motivate the batch correction
+pcaMiceRNA <-
+  DESeq2::plotPCA(vsd, "group", ntop = 1000) +
+  scale_color_manual(name = "", values = list.ggplot$colorblind_cols) +
+  ggrepel::geom_label_repel(aes(label = name), show.legend = FALSE) +
+  theme(legend.position = "top") +
+  scale_color_manual(values = list.ggplot$colorblind_cols[c(1, 2, 3, 6)])
+
+pcaMiceRNA
+
+# Correct batch effect rep1/4 and rep2/3 along PC2
+dds_mice_exvivo$batch <- "NA"
+dds_mice_exvivo$batch[grepl("_rep1$|_rep4$", colnames(dds_mice_exvivo))] <- "batch1"
+dds_mice_exvivo$batch[grepl("_rep2$|_rep3$", colnames(dds_mice_exvivo))] <- "batch2"
+dds_mice_exvivo$batch <- factor(dds_mice_exvivo$batch)
+
+knitr::kable(colData(dds_mice_exvivo))
+
+assay(dds_mice_exvivo, "vsdCorrected") <- limma::removeBatchEffect(assay(vsd), batch = dds_mice_exvivo$batch)
+
+design(dds_mice_exvivo) <- ~ batch + group
+
+dds_mice_exvivo <- DESeq(dds_mice_exvivo, quiet = TRUE)
+
+auto_genes <- c("Foxo3", "Prkaa2", "Dapk1", "Ulk1", "Ulk2")
+
+# Test against a LFC of 1 -- very stringent!
+resMiceRNA_LSK <- DESeq2::results(object = dds_mice_exvivo, contrast = c("group", "URE_LSK", "WT_LSK"), alpha = 0.05, lfcThreshold = log2(1)) %>%
+  as.data.frame() %>%
+  rownames_to_column("Gene")
+
+resMiceRNA_GMP <- DESeq2::results(object = dds_mice_exvivo, contrast = c("group", "URE_GMP", "WT_GMP"), alpha = 0.05, lfcThreshold = log2(1)) %>%
+  as.data.frame() %>%
+  rownames_to_column("Gene")
+
+Figure_5B <-
+  data.frame(resMiceRNA_LSK, comparison = "URE vs WT LSK") %>%
+  mutate(Gene = gsub(".*_", "", Gene)) %>%
+  filter(Gene %in% auto_genes & log2FoldChange > 0 & padj < 0.05) %>%
+  mutate(
+    Gene = factor(Gene, auto_genes),
+    signif = factor(case_when(
+      padj < 0.05 ~ "yes",
+      padj >= 0.05 ~ "no",
+      is.na(padj) ~ "lowly/not expressed",
+      TRUE ~ "NA"
+    ),
+    levels = c("yes", "no", "lowly/not expressed", "NA")
+    ),
+    comparison = factor(comparison, levels = c("URE vs WT LSK", "URE vs WT GMP", "URE vs WT Hox"))
+  ) %>%
+  ggplot(aes(x = 2^log2FoldChange, y = fct_rev(Gene), fill = signif)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = "black") +
+  xlab("fold change") +
+  ylab("") +
+  facet_wrap(~comparison, nrow = 1) +
+  theme(legend.position = "none")
+
+Figure_5B
+```
+
+# Western blot
+
+Plot the blot (it's funny, I know...), run t-test for the quantified bands of the n=3.
+
+```{r wb}
+
+source_data_5c <- openxlsx::read.xlsx(
+  paste0(rootdir, "/source_data/Source_Data_Figure_5/source_Data_figure_5c_values.xlsx"),
+  sheet = "Data"
+) %>%
+  mutate(cell_line = factor(cell_line, c("Hox-WT", "Hox-URE")))
+
+# Western Blot quantification from the Licor software
+Figure_5C <-
+  source_data_5c %>%
+  group_by(cell_line) %>%
+  mutate(mean = mean(value)) %>%
+  ggplot(aes(x = cell_line, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_point(aes(y = value)) +
+  geom_signif(aes(y = value),
+    test = t.test,
+    comparisons = list(c("Hox-WT", "Hox-URE")),
+    map_signif_level = FALSE
+  ) +
+  xlab("") +
+  ylab("normalized intensity") +
+  guides(x = guide_axis(angle = 45)) +
+  ylim(c(0, 60000))
+
+Figure_5C
+```
+
+# Cyto-IDs
+
+Figure 5D
+
+```{r cytoID}
+
+source_data_5d <- openxlsx::read.xlsx(
+  paste0(rootdir, "/source_data/Source_Data_Figure_5/source_data_figure_5d.xlsx"),
+  sheet = "Data"
+) %>%
+  mutate(cell_line = factor(cell_line, c("Hox-WT", "Hox-URE")))
+
+Figure_5D <-
+  source_data_5d %>%
+  group_by(cell_line) %>%
+  summarize(normalized_intensity = mean(normalized_intensity)) %>%
+  ggplot(aes(x = cell_line, y = normalized_intensity)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_point(data = source_data_5d) +
+  geom_signif(
+    data = source_data_5d,
+    test = t.test,
+    comparisons = list(c("Hox-WT", "Hox-URE")),
+    map_signif_level = FALSE
+  ) +
+  xlab("") +
+  ylab("normalized intensity") +
+  guides(x = guide_axis(angle = 45)) +
+  ylim(c(0, 120))
+
+Figure_5D
+```
+
+Figure 5E
+
+```{r 5e}
+
+source_data_5e <- openxlsx::read.xlsx(
+  paste0(rootdir, "/source_data/Source_Data_Figure_5/source_data_figure_5e.xlsx"),
+  sheet = "Data", startRow = 2
+) %>%
+  mutate(cell_line = factor(cell_line, c("Hox-WT", "Hox-URE")))
+
+# Two-way ANOVA p-value
+source_data_5e %>%
+  aov(data = ., formula = mean_fluorescence ~ cell_line + target + cell_line:target) %>%
+  broom::tidy() %>%
+  filter(term == "cell_line:target")
+
+Figure_5E <-
+  source_data_5e %>%
+  ggplot(aes(x = cell_line, y = mean_fluorescence, color = target)) +
+  geom_boxplot(outlier.shape = NA, show.legend = FALSE) +
+  geom_point(position = position_dodge(width = .7), size = 3) +
+  scale_color_manual(values = c("black", "brown")) +
+  xlab("") +
+  ylab("normalized intensity")
+
+Figure_5E
+```
+
+# Flt3 reconstitution CytoID
+
+Figure 5G
+
+```{r}
+
+# The Flt3 reconstitution experiment
+source_data_5g <- openxlsx::read.xlsx(
+  paste0(rootdir, "/source_data/Source_Data_Figure_5/source_data_figure_5g.xlsx"),
+  sheet = "Data"
+) %>%
+  mutate(group = factor(group, c("pMIG-control", "pMIG-Flt3")), biol_rep = factor(biol_rep)) %>%
+  rename(batch = biol_rep)
+
+# Here is the pvalue, technical replicates averaged and batch as a covariate
+source_data_5g %>%
+  group_by(batch, group) %>%
+  summarize(mean_fluorescence = mean(mean_fluorescence)) %>%
+  aov(data = ., formula = mean_fluorescence ~ group + batch) %>%
+  broom::tidy() %>%
+  filter(term == "group")
+
+Figure_5G <-
+  source_data_5g %>%
+  ggplot(aes(x = group, y = mean_fluorescence)) +
+  geom_boxplot() +
+  geom_point(aes(color = batch), position = position_jitter(seed = 1, width = .15), size = 2) +
+  # we later change the pvalue in inkscape to the one from the anova, the geom_signif is only to draw the horizontal bar
+  geom_signif(test = t.test, comparisons = list(c("pMIG-control", "pMIG-Flt3")), map_signif_level = TRUE) +
+  scale_color_manual(values = list.ggplot$colorblind_cols) +
+  xlab("") +
+  ylab("normalized intensity") +
+  ylim(c(0, 70)) +
+  theme(legend.position = "right") +
+  guides(x = guide_axis(angle = 45))
+
+Figure_5G
+```
+
+# Autophagy upon PU.1 reexpression in Hox-URE
+
+```{r auto_ure}
+
+source_data_5h <- openxlsx::read.xlsx(
+  paste0(rootdir, "/source_data/Source_Data_Figure_5/source_data_figure_5h.xlsx"),
+  sheet = "Data"
+) %>%
+  mutate(
+    treatment = if_else(treatment == "empty vector", "control", treatment),
+    treatment = factor(treatment, c("PU.1", "control"))
+  )
+
+
+Figure_5H <-
+  source_data_5h %>%
+  ggplot(aes(x = treatment, y = normalized_intensity)) +
+  geom_point(position = position_jitter(width = .2, seed = 1)) +
+  geom_signif(test = t.test, comparisons = list(c("PU.1", "control")), map_signif_level = FALSE)
+
+Figure_5H
+```
