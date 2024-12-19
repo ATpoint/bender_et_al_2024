@@ -231,28 +231,20 @@ text-align: justify}
 <p>Define root directory that contains the folder with source data. Run script that loads packages and define document-specific variables.</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Inside this Docker container we mount the directory with all the source data as &quot;/projectdir/&quot;</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>rootdir <span class="ot">&lt;-</span> <span class="st">&quot;/projectdir/&quot;</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(dplyr)</span></code></pre></div>
-<pre><code>## 
-## Attaching package: &#39;dplyr&#39;</code></pre>
-<pre><code>## The following objects are masked from &#39;package:stats&#39;:
-## 
-##     filter, lag</code></pre>
-<pre><code>## The following objects are masked from &#39;package:base&#39;:
-## 
-##     intersect, setdiff, setequal, union</code></pre>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">source</span>(<span class="fu">paste0</span>(rootdir, <span class="st">&quot;/runStartup.R&quot;</span>))</span></code></pre></div>
 </div>
 <div id="package-versions" class="section level1">
 <h1>Package versions</h1>
 <p>A summary of all R package versions installed in this container:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>pkg_ver <span class="ot">&lt;-</span></span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">lapply</span>(<span class="fu">rownames</span>(<span class="fu">installed.packages</span>()), <span class="cf">function</span>(x) {</span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="fu">data.frame</span>(<span class="at">package =</span> x, <span class="at">version =</span> <span class="fu">packageVersion</span>(x))</span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>  }) <span class="sc">%&gt;%</span></span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">do.call</span>(rbind, .) <span class="sc">%&gt;%</span></span>
-<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">arrange</span>(package) <span class="sc">%&gt;%</span></span>
-<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">unique</span>()</span>
-<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>knitr<span class="sc">::</span><span class="fu">kable</span>(pkg_ver)</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>pkg_ver <span class="ot">&lt;-</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">lapply</span>(<span class="fu">rownames</span>(<span class="fu">installed.packages</span>()), <span class="cf">function</span>(x) {</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="fu">data.frame</span>(<span class="at">package =</span> x, <span class="at">version =</span> <span class="fu">packageVersion</span>(x))</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>  }) <span class="sc">%&gt;%</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">do.call</span>(rbind, .) <span class="sc">%&gt;%</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">arrange</span>(package) <span class="sc">%&gt;%</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">unique</span>()</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>knitr<span class="sc">::</span><span class="fu">kable</span>(pkg_ver)</span></code></pre></div>
 <table>
 <thead>
 <tr class="header">
@@ -2519,54 +2511,168 @@ text-align: justify}
 </tr>
 </tbody>
 </table>
-<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sessionInfo</span>()</span></code></pre></div>
-<pre><code>## R version 4.0.3 (2020-10-10)
-## Platform: x86_64-pc-linux-gnu (64-bit)
-## Running under: Ubuntu 20.04 LTS
-## 
-## Matrix products: default
-## BLAS/LAPACK: /usr/lib/x86_64-linux-gnu/openblas-pthread/libopenblasp-r0.3.8.so
-## 
-## locale:
-##  [1] LC_CTYPE=en_US.UTF-8       LC_NUMERIC=C              
-##  [3] LC_TIME=en_US.UTF-8        LC_COLLATE=en_US.UTF-8    
-##  [5] LC_MONETARY=en_US.UTF-8    LC_MESSAGES=C             
-##  [7] LC_PAPER=en_US.UTF-8       LC_NAME=C                 
-##  [9] LC_ADDRESS=C               LC_TELEPHONE=C            
-## [11] LC_MEASUREMENT=en_US.UTF-8 LC_IDENTIFICATION=C       
-## 
-## attached base packages:
-## [1] stats     graphics  grDevices utils     datasets  methods   base     
-## 
-## other attached packages:
-## [1] dplyr_1.0.5
-## 
-## loaded via a namespace (and not attached):
-##  [1] knitr_1.31           magrittr_2.0.1       tidyselect_1.1.0    
-##  [4] RhpcBLASctl_0.20-137 R6_2.5.0             rlang_0.4.12        
-##  [7] fansi_0.4.2          highr_0.8            stringr_1.4.0       
-## [10] tools_4.0.3          xfun_0.21            utf8_1.1.4          
-## [13] DBI_1.1.1            htmltools_0.5.1.1    ellipsis_0.3.1      
-## [16] assertthat_0.2.1     yaml_2.2.1           digest_0.6.27       
-## [19] tibble_3.1.1         lifecycle_1.0.0      crayon_1.4.1        
-## [22] bookdown_0.21        purrr_0.3.4          vctrs_0.3.6         
-## [25] glue_1.4.2           evaluate_0.14        rmarkdown_2.6       
-## [28] stringi_1.5.3        compiler_4.0.3       pillar_1.6.0        
-## [31] generics_0.1.0       rmdformats_1.0.1     pkgconfig_2.0.3</code></pre>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sessionInfo</span>()</span></code></pre></div>
+<pre><code>#&gt; R version 4.0.3 (2020-10-10)
+#&gt; Platform: x86_64-pc-linux-gnu (64-bit)
+#&gt; Running under: Ubuntu 20.04 LTS
+#&gt; 
+#&gt; Matrix products: default
+#&gt; BLAS/LAPACK: /usr/lib/x86_64-linux-gnu/openblas-pthread/libopenblasp-r0.3.8.so
+#&gt; 
+#&gt; locale:
+#&gt;  [1] LC_CTYPE=en_US.UTF-8       LC_NUMERIC=C              
+#&gt;  [3] LC_TIME=en_US.UTF-8        LC_COLLATE=en_US.UTF-8    
+#&gt;  [5] LC_MONETARY=en_US.UTF-8    LC_MESSAGES=C             
+#&gt;  [7] LC_PAPER=en_US.UTF-8       LC_NAME=C                 
+#&gt;  [9] LC_ADDRESS=C               LC_TELEPHONE=C            
+#&gt; [11] LC_MEASUREMENT=en_US.UTF-8 LC_IDENTIFICATION=C       
+#&gt; 
+#&gt; attached base packages:
+#&gt;  [1] grid      parallel  stats4    stats     graphics  grDevices utils    
+#&gt;  [8] datasets  methods   base     
+#&gt; 
+#&gt; other attached packages:
+#&gt;  [1] UCell_1.3.1                        vizzy_1.2.2                       
+#&gt;  [3] reshape2_1.4.4                     genomation_1.22.0                 
+#&gt;  [5] viridis_0.5.1                      viridisLite_0.3.0                 
+#&gt;  [7] tximport_1.18.0                    forcats_0.5.1                     
+#&gt;  [9] stringr_1.4.0                      dplyr_1.0.5                       
+#&gt; [11] purrr_0.3.4                        readr_1.4.0                       
+#&gt; [13] tidyr_1.1.3                        tibble_3.1.1                      
+#&gt; [15] tidyverse_1.3.1                    TFBSTools_1.28.0                  
+#&gt; [17] slingshot_1.8.0                    princurve_2.1.6                   
+#&gt; [19] SingleR_1.4.1                      scuttle_1.0.4                     
+#&gt; [21] sctransform_0.3.2.9002             scran_1.18.3                      
+#&gt; [23] scDblFinder_1.4.0                  scater_1.18.3                     
+#&gt; [25] patchwork_1.1.1                    org.Mm.eg.db_3.12.0               
+#&gt; [27] openxlsx_4.2.4                     MSnbase_2.16.1                    
+#&gt; [29] ProtGenerics_1.22.0                mzR_2.24.1                        
+#&gt; [31] Rcpp_1.0.7                         motifmatchr_1.12.0                
+#&gt; [33] memes_0.99.11.90000                magrittr_2.0.1                    
+#&gt; [35] imputeLCMD_2.0                     impute_1.64.0                     
+#&gt; [37] pcaMethods_1.82.0                  norm_1.0-9.5                      
+#&gt; [39] tmvtnorm_1.4-10                    gmm_1.6-5                         
+#&gt; [41] sandwich_3.0-0                     Matrix_1.3-2                      
+#&gt; [43] mvtnorm_1.1-1                      hexbin_1.28.2                     
+#&gt; [45] gridtext_0.1.4                     gprofiler2_0.2.0                  
+#&gt; [47] glmGamPoi_1.2.0                    ggupset_0.3.0                     
+#&gt; [49] ggsignif_0.6.2                     ggrepel_0.9.1                     
+#&gt; [51] ggpubr_0.4.0                       ggplot2_3.3.5                     
+#&gt; [53] ggpointdensity_0.1.0               GEOquery_2.58.0                   
+#&gt; [55] fgsea_1.16.0                       EnrichedHeatmap_1.20.0            
+#&gt; [57] edgeR_3.32.1                       limma_3.46.0                      
+#&gt; [59] DESeq2_1.30.0                      data.table_1.13.6                 
+#&gt; [61] CreateGeneSignatures_1.0.0         ComplexHeatmap_2.6.2              
+#&gt; [63] chromVAR_1.12.0                    BSgenome.Mmusculus.UCSC.mm10_1.4.0
+#&gt; [65] BSgenome_1.58.0                    rtracklayer_1.50.0                
+#&gt; [67] Biostrings_2.58.0                  XVector_0.30.0                    
+#&gt; [69] biomaRt_2.46.3                     BiocParallel_1.24.1               
+#&gt; [71] batchelor_1.6.2                    SingleCellExperiment_1.12.0       
+#&gt; [73] SummarizedExperiment_1.20.0        GenomicRanges_1.42.0              
+#&gt; [75] GenomeInfoDb_1.26.2                MatrixGenerics_1.2.0              
+#&gt; [77] matrixStats_0.57.0                 ashr_2.2-47                       
+#&gt; [79] AnnotationDbi_1.52.0               IRanges_2.24.1                    
+#&gt; [81] S4Vectors_0.28.1                   Biobase_2.50.0                    
+#&gt; [83] BiocGenerics_0.36.0               
+#&gt; 
+#&gt; loaded via a namespace (and not attached):
+#&gt;   [1] rsvd_1.0.3                  Rsamtools_2.6.0            
+#&gt;   [3] foreach_1.5.1               crayon_1.4.1               
+#&gt;   [5] MASS_7.3-53                 nlme_3.1-151               
+#&gt;   [7] backports_1.2.1             reprex_2.0.1               
+#&gt;   [9] rmdformats_1.0.1            rlang_0.4.12               
+#&gt;  [11] readxl_1.3.1                irlba_2.3.3                
+#&gt;  [13] xgboost_1.3.2.1             rjson_0.2.20               
+#&gt;  [15] CNEr_1.26.0                 bit64_4.0.5                
+#&gt;  [17] glue_1.4.2                  mixsqp_0.3-43              
+#&gt;  [19] poweRlaw_0.70.6             vipor_0.4.5                
+#&gt;  [21] vsn_3.58.0                  haven_2.4.3                
+#&gt;  [23] tidyselect_1.1.0            XML_3.99-0.5               
+#&gt;  [25] zoo_1.8-8                   GenomicAlignments_1.26.0   
+#&gt;  [27] xtable_1.8-4                evaluate_0.14              
+#&gt;  [29] ncdf4_1.19                  cli_3.1.0                  
+#&gt;  [31] zlibbioc_1.36.0             rstudioapi_0.13            
+#&gt;  [33] miniUI_0.1.1.1              fastmatch_1.1-0            
+#&gt;  [35] seqPattern_1.22.0           shiny_1.6.0                
+#&gt;  [37] BiocSingular_1.6.0          xfun_0.21                  
+#&gt;  [39] askpass_1.1                 clue_0.3-58                
+#&gt;  [41] cluster_2.1.0               caTools_1.18.2             
+#&gt;  [43] KEGGREST_1.30.1             ape_5.4-1                  
+#&gt;  [45] listenv_0.8.0               TFMPvalue_0.0.8            
+#&gt;  [47] png_0.1-7                   future_1.21.0              
+#&gt;  [49] withr_2.4.2                 bitops_1.0-6               
+#&gt;  [51] plyr_1.8.6                  cellranger_1.1.0           
+#&gt;  [53] mzID_1.28.0                 pracma_2.3.3               
+#&gt;  [55] dqrng_0.2.1                 pillar_1.6.0               
+#&gt;  [57] GlobalOptions_0.1.2         cachem_1.0.1               
+#&gt;  [59] fs_1.5.0                    GetoptLong_1.0.5           
+#&gt;  [61] DelayedMatrixStats_1.12.2   vctrs_0.3.6                
+#&gt;  [63] ellipsis_0.3.1              generics_0.1.0             
+#&gt;  [65] tools_4.0.3                 beeswarm_0.2.3             
+#&gt;  [67] munsell_0.5.0               DelayedArray_0.16.1        
+#&gt;  [69] fastmap_1.1.0               compiler_4.0.3             
+#&gt;  [71] abind_1.4-5                 httpuv_1.5.5               
+#&gt;  [73] plotly_4.9.3                GenomeInfoDbData_1.2.4     
+#&gt;  [75] gridExtra_2.3               lattice_0.20-41            
+#&gt;  [77] utf8_1.1.4                  later_1.1.0.1              
+#&gt;  [79] BiocFileCache_1.14.0        jsonlite_1.7.2             
+#&gt;  [81] affy_1.68.0                 scales_1.1.1               
+#&gt;  [83] carData_3.0-5               sparseMatrixStats_1.2.0    
+#&gt;  [85] genefilter_1.72.1           lazyeval_0.2.2             
+#&gt;  [87] promises_1.1.1              car_3.0-12                 
+#&gt;  [89] doParallel_1.0.16           R.utils_2.10.1             
+#&gt;  [91] rmarkdown_2.6               statmod_1.4.35             
+#&gt;  [93] igraph_1.2.6                plotrix_3.8-1              
+#&gt;  [95] survival_3.2-7              ResidualMatrix_1.0.0       
+#&gt;  [97] yaml_2.2.1                  SQUAREM_2021.1             
+#&gt;  [99] htmltools_0.5.1.1           memoise_2.0.0              
+#&gt; [101] locfit_1.5-9.4              digest_0.6.27              
+#&gt; [103] assertthat_0.2.1            RhpcBLASctl_0.20-137       
+#&gt; [105] mime_0.9                    rappdirs_0.3.1             
+#&gt; [107] RSQLite_2.2.3               future.apply_1.7.0         
+#&gt; [109] blob_1.2.1                  R.oo_1.24.0                
+#&gt; [111] preprocessCore_1.52.1       splines_4.0.3              
+#&gt; [113] Cairo_1.5-12.2              RCurl_1.98-1.2             
+#&gt; [115] broom_0.7.9                 hms_1.0.0                  
+#&gt; [117] modelr_0.1.8                colorspace_2.0-0           
+#&gt; [119] BiocManager_1.30.10         ggbeeswarm_0.6.0           
+#&gt; [121] shape_1.4.5                 bookdown_0.21              
+#&gt; [123] circlize_0.4.12             ggseqlogo_0.1              
+#&gt; [125] fansi_0.4.2                 truncnorm_1.0-8            
+#&gt; [127] parallelly_1.23.0           R6_2.5.0                   
+#&gt; [129] lifecycle_1.0.0             zip_2.2.0                  
+#&gt; [131] bluster_1.0.0               curl_4.3                   
+#&gt; [133] affyio_1.60.0               RColorBrewer_1.1-2         
+#&gt; [135] iterators_1.0.13            htmlwidgets_1.5.3          
+#&gt; [137] beachmat_2.6.4              seqLogo_1.56.0             
+#&gt; [139] rvest_1.0.1                 MALDIquant_1.21            
+#&gt; [141] globals_0.14.0              openssl_1.4.3              
+#&gt; [143] codetools_0.2-18            invgamma_1.1               
+#&gt; [145] lubridate_1.8.0             GO.db_3.12.1               
+#&gt; [147] gtools_3.9.2                prettyunits_1.1.1          
+#&gt; [149] dbplyr_2.1.1                gridBase_0.4-7             
+#&gt; [151] R.methodsS3_1.8.1           gtable_0.3.0               
+#&gt; [153] DBI_1.1.1                   highr_0.8                  
+#&gt; [155] KernSmooth_2.23-18          httr_1.4.2                 
+#&gt; [157] stringi_1.5.3               progress_1.2.2             
+#&gt; [159] annotate_1.68.0             DT_0.17                    
+#&gt; [161] xml2_1.3.2                  BiocNeighbors_1.8.2        
+#&gt; [163] geneplotter_1.68.0          bit_4.0.4                  
+#&gt; [165] pkgconfig_2.0.3             DirichletMultinomial_1.32.0
+#&gt; [167] rstatix_0.7.0               knitr_1.31</code></pre>
 </div>
 <div id="command-line-tools" class="section level1">
 <h1>Command line tools</h1>
 <p>Versions of MAGeCK RRA, meme, homer, bedtools</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;ame:&quot;</span> <span class="va">$(</span><span class="ex">/software/meme/bin/ame</span> <span class="at">--version</span><span class="va">)</span></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;bedtools:&quot;</span> <span class="va">$(</span><span class="ex">/software/bedtools2/bin/bedtools</span> <span class="at">--version</span> <span class="kw">|</span> <span class="fu">awk</span> <span class="st">&#39;{gsub(&quot;bedtools &quot;, &quot;&quot;);print}&#39;</span><span class="va">)</span></span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;mageck:&quot;</span> <span class="st">&quot;</span><span class="va">$(${MAGECKPATH}</span><span class="ex">/mageck</span> <span class="at">--version</span><span class="va">)</span><span class="st">&quot;</span></span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;meme:&quot;</span> <span class="va">$(</span><span class="ex">/software/meme/bin/meme</span> <span class="at">-version</span><span class="va">)</span></span></code></pre></div>
-<pre><code>## ame: 5.5.5
-## bedtools: v2.31.1
-## bash: line 3: /mageck: No such file or directory
-## mageck: 
-## meme: 5.5.5</code></pre>
+<div class="sourceCode" id="cb5"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;ame:&quot;</span> <span class="va">$(</span><span class="ex">/software/meme/bin/ame</span> <span class="at">--version</span><span class="va">)</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;bedtools:&quot;</span> <span class="va">$(</span><span class="ex">/software/bedtools2/bin/bedtools</span> <span class="at">--version</span> <span class="kw">|</span> <span class="fu">awk</span> <span class="st">&#39;{gsub(&quot;bedtools &quot;, &quot;&quot;);print}&#39;</span><span class="va">)</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;mageck:&quot;</span> <span class="st">&quot;</span><span class="va">$(${MAGECKPATH}</span><span class="ex">/mageck</span> <span class="at">--version</span><span class="va">)</span><span class="st">&quot;</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;meme:&quot;</span> <span class="va">$(</span><span class="ex">/software/meme/bin/meme</span> <span class="at">-version</span><span class="va">)</span></span></code></pre></div>
+<pre><code>#&gt; ame: 5.5.5
+#&gt; bedtools: v2.31.1
+#&gt; mageck: 0.5.9.5
+#&gt; meme: 5.5.5</code></pre>
 </div>
 </div>
 

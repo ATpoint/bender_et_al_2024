@@ -112,7 +112,7 @@ We provide a Docker image that contains the exact software versions (R and comma
 Here, `DIR` is the full path to the directory with the folder `source_data` created above and the Rmarkdown and R scripts from the repository:
 
 ```r
-DIR="/home/atpoint/bender_et_al"
+DIR="/home/atpoint/bender_et_al_2024/"
 IMAGE="atpoint/phd_project:1.9.5"
 docker pull "$IMAGE" # takes some time, it's a big one due to legacy burden over many years...
 docker run -d -p 8787:8787 -v "${DIR}":/projectdir -e PASSWORD=aVeryComplexPassword -e ROOT=TRUE -e IMAGE="$IMAGE" "$IMAGE"

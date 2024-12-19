@@ -31,7 +31,7 @@ loads packages and define document-specific variables.
 
 # Inside this Docker container we mount the directory with all the source data as "/projectdir/"
 rootdir <- "/projectdir/"
-library(dplyr)
+source(paste0(rootdir, "/runStartup.R"))
 ```
 
 # Package versions
@@ -63,5 +63,4 @@ echo "ame:" $(/software/meme/bin/ame --version)
 echo "bedtools:" $(/software/bedtools2/bin/bedtools --version | awk '{gsub("bedtools ", "");print}')
 echo "mageck:" "$(${MAGECKPATH}/mageck --version)"
 echo "meme:" $(/software/meme/bin/meme -version)
-
 ```
